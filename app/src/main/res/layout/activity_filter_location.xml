@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@android:color/white">
+
+    <!-- Compact Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@android:color/holo_blue_dark"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Filter Location Records"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/white"/>
+    </LinearLayout>
+
+    <!-- Compact Filter Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <!-- Start Date Time - Compact -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="From: "
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="8dp"/>
+
+            <Button
+                android:id="@+id/btnStartDate"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:text="Start Date"
+                android:textSize="11sp"
+                android:padding="4dp"
+                android:layout_marginEnd="4dp"/>
+
+            <Button
+                android:id="@+id/btnStartTime"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="0.7"
+                android:text="Time"
+                android:textSize="11sp"
+                android:padding="4dp"/>
+        </LinearLayout>
+
+        <!-- End Date Time - Compact -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="To:     "
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="8dp"/>
+
+            <Button
+                android:id="@+id/btnEndDate"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:text="End Date"
+                android:textSize="11sp"
+                android:padding="4dp"
+                android:layout_marginEnd="4dp"/>
+
+            <Button
+                android:id="@+id/btnEndTime"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="0.7"
+                android:text="Time"
+                android:textSize="11sp"
+                android:padding="4dp"/>
+        </LinearLayout>
+
+        <!-- Action Buttons - Side by Side -->
+        <!-- Action Buttons - 3 Buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnFilter"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="Apply Filter"
+                android:textSize="11sp"
+                android:layout_marginEnd="2dp"/>
+
+            <Button
+                android:id="@+id/btnViewOnMap"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="View Map"
+                android:textSize="11sp"
+                android:backgroundTint="@android:color/holo_green_dark"
+                android:layout_marginStart="2dp"
+                android:layout_marginEnd="2dp"/>
+
+            <Button
+                android:id="@+id/btnSendEmail"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="Send Email"
+                android:textSize="11sp"
+                android:backgroundTint="@android:color/holo_orange_dark"
+                android:layout_marginStart="2dp"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@android:color/darker_gray"/>
+
+    <!-- RecyclerView - Takes Maximum Space -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvFilteredTracks"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="8dp"/>
+
+</LinearLayout>

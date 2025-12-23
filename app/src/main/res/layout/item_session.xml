@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="4dp"
+    android:elevation="2dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="?attr/selectableItemBackground">
+
+        <TextView
+            android:id="@+id/tvSessionId"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Session #1"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/black"
+            android:layout_marginBottom="6dp"/>
+
+        <TextView
+            android:id="@+id/tvLoginTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Login: 20-12-2025 09:30:00"
+            android:textSize="12sp"
+            android:layout_marginBottom="2dp"/>
+
+        <TextView
+            android:id="@+id/tvLogoutTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Logout: 20-12-2025 18:30:00"
+            android:textSize="12sp"
+            android:layout_marginBottom="2dp"/>
+
+        <TextView
+            android:id="@+id/tvDuration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Duration: 9 hours"
+            android:textSize="12sp"
+            android:textColor="@android:color/holo_green_dark"/>
+    </LinearLayout>
+
+</androidx.cardview.widget.CardView>
