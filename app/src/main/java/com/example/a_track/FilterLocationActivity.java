@@ -20,6 +20,7 @@ import com.example.a_track.adapter.TrackAdapter;
 import com.example.a_track.database.AppDatabase;
 import com.example.a_track.database.LocationTrack;
 import com.example.a_track.utils.SessionManager;
+import com.example.a_track.utils.EmailSender;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.List;
@@ -74,7 +75,7 @@ public class FilterLocationActivity extends AppCompatActivity {
         btnEndTime.setOnClickListener(v -> showEndTimePicker());
         btnFilter.setOnClickListener(v -> applyFilter());
         btnViewOnMap.setOnClickListener(v -> viewOnMap());
-        btnSendEmail.setOnClickListener(v -> showEmailDialog());
+        btnSendEmail.setOnClickListener(v -> sendEmailWithCsv());
 
         // Load all tracks initially
         loadAllTracks();
@@ -202,39 +203,22 @@ public class FilterLocationActivity extends AppCompatActivity {
                     });
         }
     }
-    private void showEmailDialog() {
+
+
+    private void sendEmailWithCsv() {
+        String recipientEmail = "tswakde@gmail.com"; // Change this to your email
+
         if (currentFilteredTracks == null || currentFilteredTracks.isEmpty()) {
             Toast.makeText(this, "No data to send. Please apply filter first.", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // Create dialog to get email address
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Send Email");
-        builder.setMessage("Enter recipient email address:");
-
-        final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
-        input.setHint("email@example.com");
-        builder.setView(input);
-
-        builder.setPositiveButton("Send", (dialog, which) -> {
-            String email = input.getText().toString().trim();
-            if (email.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
-                Toast.makeText(this, "Please enter a valid email address", Toast.LENGTH_SHORT).show();
-            } else {
-                sendEmailWithCsv(email);
-            }
-        });
-
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-        builder.show();
-    }
-
-    private void sendEmailWithCsv(String recipientEmail) {
         String mobile = sessionManager.getMobileNumber();
         long startTime = startCalendar.getTimeInMillis();
         long endTime = endCalendar.getTimeInMillis();
+
+        // Show progress
+        Toast.makeText(this, "Generating CSV and sending email...", Toast.LENGTH_SHORT).show();
 
         // Generate CSV file
         File csvFile = CsvHelper.generateLocationTrackCsv(
@@ -245,30 +229,43 @@ public class FilterLocationActivity extends AppCompatActivity {
             return;
         }
 
-        // Create email intent
-        Intent emailIntent = new Intent(Intent.ACTION_SEND);
-        emailIntent.setType("message/rfc822");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{recipientEmail});
-        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "A-Track Location Data - " + mobile);
-        emailIntent.putExtra(Intent.EXTRA_TEXT,
-                "Please find attached the location tracking data from " +
-                        dateTimeFormat.format(startCalendar.getTime()) + " to " +
-                        dateTimeFormat.format(endCalendar.getTime()));
+        // Prepare email content
+        String subject = "A-Track Location Data - " + mobile;
+        String body = "Hello,\n\n" +
+                "Please find attached the location tracking data.\n\n" +
+                "Filter Period:\n" +
+                "From: " + dateTimeFormat.format(startCalendar.getTime()) + "\n" +
+                "To: " + dateTimeFormat.format(endCalendar.getTime()) + "\n\n" +
+                "Total Records: " + currentFilteredTracks.size() + "\n\n" +
+                "Best regards,\n" +
+                "A-Track System";
 
-        // Attach CSV file
-        Uri fileUri = FileProvider.getUriForFile(
-                this,
-                getPackageName() + ".provider",
-                csvFile);
-        emailIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
-        emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        // Send email in background
+        EmailSender.sendEmailWithAttachment(
+                recipientEmail,
+                subject,
+                body,
+                csvFile,
+                new EmailSender.EmailCallback() {
+                    @Override
+                    public void onSuccess() {
+                        runOnUiThread(() -> {
+                            Toast.makeText(FilterLocationActivity.this,
+                                    "✓ Email sent successfully!",
+                                    Toast.LENGTH_LONG).show();
+                        });
+                    }
 
-        try {
-            startActivity(Intent.createChooser(emailIntent, "Send email using..."));
-            Toast.makeText(this, "Opening email app...", Toast.LENGTH_SHORT).show();
-        } catch (android.content.ActivityNotFoundException ex) {
-            Toast.makeText(this, "No email app found", Toast.LENGTH_SHORT).show();
-        }
+                    @Override
+                    public void onFailure(String error) {
+                        runOnUiThread(() -> {
+                            Toast.makeText(FilterLocationActivity.this,
+                                    "✗ Failed to send email: " + error,
+                                    Toast.LENGTH_LONG).show();
+                        });
+                    }
+                }
+        );
     }
 
     private void loadAllTracks() {

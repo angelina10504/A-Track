@@ -34,6 +34,13 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    packaging {
+        resources {
+            excludes.add("META-INF/NOTICE.md")
+            excludes.add("META-INF/LICENSE.md")
+        }
+    }
 }
 
 dependencies {
