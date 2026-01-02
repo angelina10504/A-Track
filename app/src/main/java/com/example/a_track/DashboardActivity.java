@@ -177,29 +177,29 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
-    try    {
-        // Enable location layer if permission granted
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
-            mMap.setMyLocationEnabled(true);
+        try    {
+            // Enable location layer if permission granted
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED) {
+                mMap.setMyLocationEnabled(true);
+            }
+
+            // Set map UI settings
+            mMap.getUiSettings().setZoomControlsEnabled(true);
+            mMap.getUiSettings().setMyLocationButtonEnabled(true);
+            mMap.getUiSettings().setCompassEnabled(true);
+
+            // Set default location (will be updated with actual location)
+            LatLng defaultLocation = new LatLng(21.1702, 72.8311); // Surat coordinates
+            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(defaultLocation, 15));
+
+            Log.d("DashboardActivity", "Map initialized successfully");
+
+            // Load existing route for current session
+            loadCurrentSessionRoute();
+        } catch (Exception e) {
+            Log.e("DashboardActivity", "Error initializing map: " + e.getMessage());
         }
-
-        // Set map UI settings
-        mMap.getUiSettings().setZoomControlsEnabled(true);
-        mMap.getUiSettings().setMyLocationButtonEnabled(true);
-        mMap.getUiSettings().setCompassEnabled(true);
-
-        // Set default location (will be updated with actual location)
-        LatLng defaultLocation = new LatLng(21.1702, 72.8311); // Surat coordinates
-        mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(defaultLocation, 15));
-
-        Log.d("DashboardActivity", "Map initialized successfully");
-
-        // Load existing route for current session
-        loadCurrentSessionRoute();
-    } catch (Exception e) {
-        Log.e("DashboardActivity", "Error initializing map: " + e.getMessage());
-    }
     }
 
     private void loadCurrentSessionRoute() {

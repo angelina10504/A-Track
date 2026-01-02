@@ -33,6 +33,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.content.IntentFilter;
 import android.os.BatteryManager;
+import com.example.a_track.utils.ApiService;
+
 
 public class LocationTrackingService extends Service {
 
@@ -88,6 +90,16 @@ public class LocationTrackingService extends Service {
         setupLocationCallback();
         startLocationUpdates();
         startPeriodicLocationFetch();
+
+        // Sync to server every 2 minutes
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                syncDataToServer();
+                handler.postDelayed(this, 120000); // 2 minutes
+            }
+        }, 120000);
+
 
         Log.d(TAG, "Service started successfully");
     }
@@ -246,6 +258,44 @@ public class LocationTrackingService extends Service {
             }
         });
     }
+
+    private void syncDataToServer() {
+
+        executorService.execute(() -> {
+
+            try {
+                // Get unsynced records
+                java.util.List<LocationTrack> tracks =
+                        db.locationTrackDao().getUnsyncedTracks(20);
+
+                if (tracks == null || tracks.isEmpty()) {
+                    Log.d("SYNC", "No data to sync");
+                    return;
+                }
+
+                Log.d("SYNC", "Syncing " + tracks.size() + " records");
+
+                ApiService.syncLocations(
+                        tracks,
+                        new ApiService.SyncCallback() {
+                            @Override
+                            public void onSuccess(int syncedCount) {
+                                Log.d("SYNC", "Synced " + syncedCount + " records");
+                            }
+
+                            @Override
+                            public void onFailure(String error) {
+                                Log.e("SYNC", "Sync failed: " + error);
+                            }
+                        }
+                );
+
+            } catch (Exception e) {
+                Log.e("SYNC", "Sync exception: " + e.getMessage());
+            }
+        });
+    }
+
 
     public Location getLastLocation() {
         return lastLocation;

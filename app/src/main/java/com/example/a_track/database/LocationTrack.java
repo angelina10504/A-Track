@@ -16,6 +16,8 @@ public class LocationTrack {
     private String sessionId;
     private int battery;
 
+    private int synced;
+
     public LocationTrack(String mobileNumber, double latitude, double longitude,
                          float speed, float angle, long dateTime, String sessionId, int battery) {
         this.mobileNumber = mobileNumber;
@@ -26,6 +28,7 @@ public class LocationTrack {
         this.dateTime = dateTime;
         this.sessionId = sessionId;
         this.battery = battery;
+        this.synced = 0;
 
     }
 
@@ -100,4 +103,7 @@ public class LocationTrack {
     public void setBattery(int battery) {
         this.battery = battery;
     }
+
+    public int getSynced() { return synced; }
+    public void setSynced(int synced) { this.synced = synced; }
 }
