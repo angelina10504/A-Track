@@ -241,7 +241,7 @@ public class LocationTrackingService extends Service {
             return;
         }
 
-        long currentTime = System.currentTimeMillis();
+        long currentTime = location.getTime();
         int battery = getBatteryLevel();
 
         LocationTrack track = new LocationTrack(
