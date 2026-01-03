@@ -44,21 +44,25 @@ public interface LocationTrackDao {
 
     // ---------------- BACKGROUND / SYNC QUERIES ----------------
 
-    // Get UNSYNCED records (for upload)
+    // Get ALL tracks for sync (synchronous) - ADDED mobile parameter
     @Query("SELECT * FROM location_tracks " +
-            "WHERE synced = 0 " +
-            "ORDER BY dateTime ASC " +
-            "LIMIT :limit")
-    List<LocationTrack> getUnsyncedTracks(int limit);
+            "WHERE mobileNumber = :mobile " +
+            "ORDER BY dateTime ASC")
+    List<LocationTrack> getAllTracksSync(String mobile);
+
+    // Get UNSYNCED records (for upload) - FIXED: added WHERE mobileNumber
+    @Query("SELECT * FROM location_tracks " +
+            "WHERE mobileNumber = :mobile AND synced = 0 " +
+            "ORDER BY dateTime ASC")
+    List<LocationTrack> getUnsyncedTracks(String mobile);
 
     // Mark uploaded records as synced
     @Query("UPDATE location_tracks SET synced = 1 WHERE id IN (:ids)")
     void markAsSynced(List<Integer> ids);
 
     // Cleanup only ALREADY SYNCED old records
-    @Query("DELETE FROM location_tracks " +
-            "WHERE synced = 1 AND dateTime < :beforeTime")
-    int deleteSyncedOlderThan(long beforeTime);
+    @Query("DELETE FROM location_tracks WHERE mobileNumber = :mobile AND dateTime < :dateTime AND synced = 1")
+    int deleteOldTracks(String mobile, long dateTime);
 
     // ---------------- OPTIONAL EXPORT / DEBUG ----------------
 

@@ -10,6 +10,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
 
 import com.example.a_track.database.LocationTrack;
@@ -24,17 +25,35 @@ public class ApiService {
     private static final int TIMEOUT = 15000; // 15 seconds
 
     public interface SyncCallback {
-        void onSuccess(int syncedCount);
+        void onSuccess(int syncedCount, List<Integer> trackIds);
         void onFailure(String error);
     }
 
     public static void syncLocations(List<LocationTrack> tracks, SyncCallback callback) {
         new Thread(() -> {
             try {
+                // FILTER: Only sync records where synced = 0
+                List<LocationTrack> unsyncedTracks = new ArrayList<>();
+                List<Integer> trackIds = new ArrayList<>();
+
+                for (LocationTrack track : tracks) {
+                    if (track.getSynced() == 0) { // Only unsynced records
+                        unsyncedTracks.add(track);
+                        trackIds.add(track.getId());
+                    }
+                }
+
+                if (unsyncedTracks.isEmpty()) {
+                    Log.d(TAG, "✓ No new data to sync");
+                    callback.onSuccess(0, new ArrayList<>()); // FIXED: Pass empty list
+                    return;
+                }
+
+                Log.d(TAG, "📤 Syncing " + unsyncedTracks.size() + " unsynced locations");
+
                 URL url = new URL(BASE_URL + "sync_locations.php");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 
-                // ✅ Connection settings
                 conn.setRequestMethod("POST");
                 conn.setDoOutput(true);
                 conn.setDoInput(true);
@@ -43,11 +62,11 @@ public class ApiService {
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setRequestProperty("Accept", "application/json");
 
-                // 📦 Build JSON payload
+                // Build JSON payload
                 JSONObject payload = new JSONObject();
                 JSONArray locationsArray = new JSONArray();
 
-                for (LocationTrack track : tracks) {
+                for (LocationTrack track : unsyncedTracks) {
                     JSONObject loc = new JSONObject();
                     loc.put("mobileNumber", track.getMobileNumber());
                     loc.put("latitude", track.getLatitude());
@@ -56,24 +75,20 @@ public class ApiService {
                     loc.put("angle", track.getAngle());
                     loc.put("battery", track.getBattery());
                     loc.put("dateTime", track.getDateTime());
+                    loc.put("sessionId", track.getSessionId());
                     locationsArray.put(loc);
                 }
 
                 payload.put("locations", locationsArray);
 
-                Log.d(TAG, "Syncing " + tracks.size() + " locations to server");
-                Log.d(TAG, "Payload: " + payload.toString());
-
-                // 📤 Send request
+                // Send request
                 OutputStream os = conn.getOutputStream();
                 os.write(payload.toString().getBytes("UTF-8"));
                 os.flush();
                 os.close();
 
-                // 📥 Read response
+                // Read response
                 int responseCode = conn.getResponseCode();
-                Log.d(TAG, "Response code: " + responseCode);
-
                 BufferedReader br = new BufferedReader(
                         new InputStreamReader(
                                 responseCode == 200
@@ -90,9 +105,8 @@ public class ApiService {
                 br.close();
 
                 String responseBody = response.toString();
-                Log.d(TAG, "Response body: " + responseBody);
+                Log.d(TAG, "📥 Response: " + responseBody);
 
-                // ✅ Parse JSON response properly
                 if (responseCode == 200) {
                     try {
                         JSONObject result = new JSONObject(responseBody);
@@ -101,12 +115,11 @@ public class ApiService {
                         if (success) {
                             int synced = result.optInt("synced", 0);
                             int duplicates = result.optInt("duplicates", 0);
-                            int errors = result.optInt("errors", 0);
 
-                            Log.d(TAG, "✓ Sync successful: " + synced + " synced, " +
-                                    duplicates + " duplicates, " + errors + " errors");
+                            Log.d(TAG, "✓ Sync complete: " + synced + " new, " + duplicates + " duplicates");
 
-                            callback.onSuccess(synced);
+                            // FIXED: Pass track IDs back to mark as synced
+                            callback.onSuccess(synced, trackIds);
                         } else {
                             String message = result.optString("message", "Unknown error");
                             Log.e(TAG, "✗ Sync failed: " + message);
@@ -118,7 +131,7 @@ public class ApiService {
                     }
                 } else {
                     Log.e(TAG, "✗ HTTP error: " + responseCode);
-                    callback.onFailure("HTTP " + responseCode + ": " + responseBody);
+                    callback.onFailure("HTTP " + responseCode);
                 }
 
             } catch (Exception e) {
