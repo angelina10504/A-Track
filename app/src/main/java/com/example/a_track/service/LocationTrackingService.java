@@ -57,6 +57,11 @@ public class LocationTrackingService extends Service {
     private Runnable locationRunnable;
     private Runnable syncRunnable;
     private PowerManager.WakeLock wakeLock;
+    private Location lastSavedLocation;
+    private Location stationaryBaseLocation; // Reference point when stationary
+    private int stationaryCount = 0; // How many consecutive stationary readings
+    private static final float STATIONARY_THRESHOLD = 5.0f; // Consider stationary if moved < 5m
+    private static final float MIN_SPEED = 0.5f;
 
     private final IBinder binder = new LocalBinder();
 
@@ -241,6 +246,47 @@ public class LocationTrackingService extends Service {
             return;
         }
 
+        Location locationToSave;
+
+        // ✅ Determine if stationary
+        boolean isStationary = false;
+        if (lastSavedLocation != null) {
+            float distance = location.distanceTo(lastSavedLocation);
+            float speed = location.hasSpeed() ? location.getSpeed() : 0;
+
+            // Check if stationary (small movement + low speed)
+            if (distance < STATIONARY_THRESHOLD && speed < MIN_SPEED) {
+                isStationary = true;
+                stationaryCount++;
+            } else {
+                isStationary = false;
+                stationaryCount = 0;
+                stationaryBaseLocation = null; // Reset when moving
+            }
+        }
+
+        // ✅ Handle stationary vs moving
+        if (isStationary) {
+            // Set base location on first stationary detection
+            if (stationaryBaseLocation == null) {
+                stationaryBaseLocation = new Location(location);
+                Log.d(TAG, "🛑 Now stationary - base location set");
+            }
+
+            // Use the base location (no zigzag)
+            locationToSave = new Location(stationaryBaseLocation);
+            locationToSave.setTime(location.getTime());
+            locationToSave.setSpeed(0); // Force speed to 0 when stationary
+            locationToSave.setBearing(lastSavedLocation != null ? lastSavedLocation.getBearing() : 0);
+
+            Log.d(TAG, "📍 Stationary (" + stationaryCount + "x) - using stable coordinates");
+
+        } else {
+            // Moving - use actual location
+            locationToSave = location;
+            Log.d(TAG, "🚗 Moving - using GPS coordinates");
+        }
+
         long currentTime = location.getTime();
         int battery = getBatteryLevel();
 
@@ -258,6 +304,7 @@ public class LocationTrackingService extends Service {
         executorService.execute(() -> {
             try {
                 db.locationTrackDao().insert(track);
+                lastSavedLocation = new Location(locationToSave);
 
                 Log.d(TAG, "✓ Location saved: Lat=" + location.getLatitude() +
                         ", Lng=" + location.getLongitude() +
