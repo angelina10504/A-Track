@@ -320,7 +320,6 @@ public class LocationTrackingService extends Service {
         if (mobile == null) return;
 
         executorService.execute(() -> {
-            // Get ALL tracks (ApiService will filter unsynced ones)
             List<LocationTrack> tracks = db.locationTrackDao().getAllTracksSync(mobile);
 
             if (tracks.isEmpty()) {
@@ -335,18 +334,32 @@ public class LocationTrackingService extends Service {
                 public void onSuccess(int syncedCount, List<Integer> syncedIds) {
                     Log.d(TAG, "✓ Successfully synced " + syncedCount + " locations");
 
-                    // Mark these tracks as synced in local database
-                    if (!syncedIds.isEmpty()) {
-                        executorService.execute(() -> {
+                    executorService.execute(() -> {
+                        // Mark newly synced records
+                        if (!syncedIds.isEmpty()) {
                             db.locationTrackDao().markAsSynced(syncedIds);
                             Log.d(TAG, "✓ Marked " + syncedIds.size() + " records as synced");
+                        }
 
-                            // Delete old SYNCED data (older than 24 hours)
-                            long twentyFourHoursAgo = System.currentTimeMillis() - (24 * 60 * 60 * 1000);
-                            int deleted = db.locationTrackDao().deleteOldTracks(mobile, twentyFourHoursAgo);
-                            Log.d(TAG, "✓ Deleted " + deleted + " old synced records");
-                        });
-                    }
+                        // ✅ DELETE ALL synced records NOT from today
+                        // Get today's start time (00:00:00)
+                        java.util.Calendar calendar = java.util.Calendar.getInstance();
+                        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0);
+                        calendar.set(java.util.Calendar.MINUTE, 0);
+                        calendar.set(java.util.Calendar.SECOND, 0);
+                        calendar.set(java.util.Calendar.MILLISECOND, 0);
+                        long todayStartMillis = calendar.getTimeInMillis();
+
+                        Log.d(TAG, "========== DELETION DEBUG ==========");
+                        Log.d(TAG, "Today's date: " + new java.util.Date(System.currentTimeMillis()));
+                        Log.d(TAG, "Today start (00:00): " + new java.util.Date(todayStartMillis));
+                        Log.d(TAG, "Deleting synced records before: " + new java.util.Date(todayStartMillis));
+
+                        // Delete all synced records older than today
+                        int deleted = db.locationTrackDao().deleteOldTracks(todayStartMillis);
+                        Log.d(TAG, "✓ Deleted " + deleted + " old synced records (before today)");
+                        Log.d(TAG, "====================================");
+                    });
                 }
 
                 @Override

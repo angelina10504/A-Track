@@ -61,8 +61,8 @@ public interface LocationTrackDao {
     void markAsSynced(List<Integer> ids);
 
     // Cleanup only ALREADY SYNCED old records
-    @Query("DELETE FROM location_tracks WHERE mobileNumber = :mobile AND dateTime < :dateTime AND synced = 1")
-    int deleteOldTracks(String mobile, long dateTime);
+    @Query("DELETE FROM location_tracks WHERE synced = 1 AND dateTime < :todayStartMillis")
+    int deleteOldTracks(long todayStartMillis);
 
     // ---------------- OPTIONAL EXPORT / DEBUG ----------------
 

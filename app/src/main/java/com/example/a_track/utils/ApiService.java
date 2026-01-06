@@ -25,7 +25,7 @@ public class ApiService {
     private static final int TIMEOUT = 15000; // 15 seconds
 
     public interface SyncCallback {
-        void onSuccess(int syncedCount, List<Integer> trackIds);
+        void onSuccess(int syncedCount, List<Integer> syncedIds);
         void onFailure(String error);
     }
 
