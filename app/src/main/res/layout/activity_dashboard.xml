@@ -136,9 +136,15 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Recent Tracks Card -->
+
 
             <!-- Action Buttons -->
+            <Button
+                android:id="@+id/btnTakePhoto"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="📷 Take Photo"
+                android:backgroundTint="@color/material_dynamic_primary30"/>
             <Button
                 android:id="@+id/btnFilterLocation"
                 android:layout_width="match_parent"

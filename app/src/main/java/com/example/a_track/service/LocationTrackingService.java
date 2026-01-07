@@ -298,7 +298,9 @@ public class LocationTrackingService extends Service {
                 location.getBearing(),
                 currentTime,
                 sessionId,
-                battery
+                battery,
+                null,
+                null
         );
 
         executorService.execute(() -> {

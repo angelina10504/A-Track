@@ -50,7 +50,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
 
     private TextView tvUsername, tvLatitude, tvLongitude, tvSpeed, tvAngle, tvDateTime;
     private RecyclerView rvRecentTracks;
-    private Button btnFilterLocation, btnFilterSession, btnLogout;
+    private Button btnFilterLocation, btnFilterSession, btnLogout, btnTakePhoto;
 
     private GoogleMap mMap;
     private Marker currentLocationMarker;
@@ -141,6 +141,19 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         });
 
         btnLogout.setOnClickListener(v -> showLogoutDialog());
+
+        btnTakePhoto.setOnClickListener(v -> {
+            if (serviceBound && locationService != null) {
+                Location location = locationService.getLastLocation();
+                if (location != null) {
+                    openCameraActivity(location);
+                } else {
+                    Toast.makeText(this, "Waiting for location...", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                Toast.makeText(this, "Location service not ready", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void initViews() {
@@ -154,6 +167,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         btnFilterLocation = findViewById(R.id.btnFilterLocation);
         btnFilterSession = findViewById(R.id.btnFilterSession);
         btnLogout = findViewById(R.id.btnLogout);
+        btnTakePhoto = findViewById(R.id.btnTakePhoto);
     }
 
     private void setupRecyclerView() {
@@ -432,5 +446,14 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }
+    }
+    private void openCameraActivity(Location location) {
+        Intent intent = new Intent(this, CameraActivity.class);
+        intent.putExtra("latitude", location.getLatitude());
+        intent.putExtra("longitude", location.getLongitude());
+        intent.putExtra("speed", location.getSpeed());
+        intent.putExtra("angle", location.getBearing());
+        intent.putExtra("dateTime", location.getTime());
+        startActivity(intent);
     }
 }
