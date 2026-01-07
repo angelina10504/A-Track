@@ -17,9 +17,11 @@ public class LocationTrack {
     private int battery;
 
     private int synced;
+    private String photoPath;
+    private String textMsg;
 
     public LocationTrack(String mobileNumber, double latitude, double longitude,
-                         float speed, float angle, long dateTime, String sessionId, int battery) {
+                         float speed, float angle, long dateTime, String sessionId, int battery, String photoPath, String textMsg ) {
         this.mobileNumber = mobileNumber;
         this.latitude = latitude;
         this.longitude = longitude;
@@ -29,6 +31,8 @@ public class LocationTrack {
         this.sessionId = sessionId;
         this.battery = battery;
         this.synced = 0;
+        this.photoPath = photoPath;
+        this.textMsg = textMsg;
 
     }
 
@@ -106,4 +110,12 @@ public class LocationTrack {
 
     public int getSynced() { return synced; }
     public void setSynced(int synced) { this.synced = synced; }
+
+    public String getPhotoPath() {return photoPath;}
+
+    public void setPhotoPath(String photoPath) {this.photoPath = photoPath;}
+
+    public String getTextMsg() {return textMsg;}
+
+    public void setTextMsg(String textMsg) {this.textMsg = textMsg;}
 }
