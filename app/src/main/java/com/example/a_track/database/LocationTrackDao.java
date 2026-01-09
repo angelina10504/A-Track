@@ -13,7 +13,7 @@ public interface LocationTrackDao {
     // ---------------- INSERT ----------------
 
     @Insert
-    void insert(LocationTrack locationTrack);
+    long insert(LocationTrack locationTrack);
 
     // ---------------- UI QUERIES (LiveData) ----------------
 
