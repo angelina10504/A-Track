@@ -35,6 +35,9 @@ import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
+
+import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -369,6 +372,44 @@ public class LocationTrackingService extends Service {
                     Log.e(TAG, "✗ Sync failed: " + error);
                 }
             });
+        });
+    }
+
+    private void syncPendingPhotos() {
+        String mobile = sessionManager.getMobileNumber();
+        if (mobile == null) return;
+
+        executorService.execute(() -> {
+            // Get all records with photos that haven't been synced
+            List<LocationTrack> allTracks = db.locationTrackDao().getAllTracksSync(mobile);
+
+            for (LocationTrack track : allTracks) {
+                if (track.getPhotoPath() != null && !track.getPhotoPath().isEmpty()
+                        && track.getSynced() == 0) {
+
+                    File photoFile = new File(track.getPhotoPath());
+                    if (photoFile.exists()) {
+                        Log.d(TAG, "📤 Syncing pending photo: " + photoFile.getName());
+
+                        ApiService.uploadPhoto(track, photoFile, new ApiService.PhotoUploadCallback() {
+                            @Override
+                            public void onSuccess(String photoPath) {
+                                executorService.execute(() -> {
+                                    List<Integer> ids = new ArrayList<>();
+                                    ids.add(track.getId());
+                                    db.locationTrackDao().markAsSynced(ids);
+                                    Log.d(TAG, "✓ Photo synced: " + photoFile.getName());
+                                });
+                            }
+
+                            @Override
+                            public void onFailure(String error) {
+                                Log.e(TAG, "✗ Photo sync failed: " + error);
+                            }
+                        });
+                    }
+                }
+            }
         });
     }
 

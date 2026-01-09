@@ -243,10 +243,12 @@ public class CameraActivity extends AppCompatActivity {
             return;
         }
 
-        // Get battery level
         int battery = getBatteryLevel();
 
-        // Create LocationTrack record with photo
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                .format(new Date(dateTime));
+        String photoFileName = mobileNumber + "_" + timestamp + ".jpg";
+
         LocationTrack track = new LocationTrack(
                 mobileNumber,
                 latitude,
@@ -256,28 +258,50 @@ public class CameraActivity extends AppCompatActivity {
                 dateTime,
                 sessionId,
                 battery,
-                capturedImageFile.getAbsolutePath(),  // photoPath
-                remarks.isEmpty() ? null : remarks     // textMsg
+                photoFileName,
+                remarks.isEmpty() ? null : remarks
         );
 
-        // Save to database
+        // Show progress
+        Toast.makeText(this, "Saving and uploading photo...", Toast.LENGTH_SHORT).show();
+
+        // Save to local database first
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(() -> {
             try {
-                db.locationTrackDao().insert(track);
+                long recordId = db.locationTrackDao().insert(track);
+                track.setId((int) recordId);
 
-                Log.d(TAG, "Photo record saved to database");
-                Log.d(TAG, "Photo path: " + capturedImageFile.getAbsolutePath());
-                Log.d(TAG, "Remarks: " + remarks);
+                Log.d(TAG, "Photo record saved locally with ID: " + recordId);
+                Log.d(TAG, "Photo filename: " + photoFileName);
 
-                runOnUiThread(() -> {
-                    Toast.makeText(this, "Photo record saved!", Toast.LENGTH_SHORT).show();
-                    finish(); // Close camera activity
+                // Upload to server
+                ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
+                    @Override
+                    public void onSuccess(String photoPath) {
+                        runOnUiThread(() -> {
+                            Toast.makeText(CameraActivity.this,
+                                    "✓ Photo uploaded successfully!", Toast.LENGTH_SHORT).show();
+                            finish();
+                        });
+                    }
+
+                    @Override
+                    public void onFailure(String error) {
+                        runOnUiThread(() -> {
+                            Toast.makeText(CameraActivity.this,
+                                    "✓ Saved locally. Will sync later: " + error,
+                                    Toast.LENGTH_LONG).show();
+                            finish();
+                        });
+                    }
                 });
+
             } catch (Exception e) {
                 Log.e(TAG, "Error saving photo record: " + e.getMessage());
                 runOnUiThread(() -> {
-                    Toast.makeText(this, "Failed to save record", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(CameraActivity.this,
+                            "Failed to save record", Toast.LENGTH_SHORT).show();
                 });
             }
         });
