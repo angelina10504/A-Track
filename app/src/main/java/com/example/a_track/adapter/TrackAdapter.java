@@ -24,7 +24,7 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
     @NonNull
     @Override
     public TrackViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_track, parent, false);
+        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_location_track, parent, false);
         return new TrackViewHolder(view);
     }
 
@@ -35,13 +35,14 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
         String dateTime = dateFormat.format(new Date(track.getDateTime()));
         holder.tvTrackDateTime.setText(dateTime);
 
-        String location = String.format(Locale.getDefault(), "Lat: %.4f, Lng: %.4f",
+        String location = String.format(Locale.getDefault(), "Lat: %.2f, Lng: %.2f",
                 track.getLatitude(), track.getLongitude());
         holder.tvTrackLocation.setText(location);
 
-        String speedAngle = String.format(Locale.getDefault(), "Speed: %.2f m/s | Angle: %.0f°",
-                track.getSpeed(), track.getAngle());
-        holder.tvTrackSpeed.setText(speedAngle);
+        String speed = String.format(Locale.getDefault(), "Sp: %.2f m/s",
+                track.getSpeed());
+        holder.tvTrackSpeed.setText(speed);
+
     }
 
     @Override
