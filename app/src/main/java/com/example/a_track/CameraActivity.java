@@ -28,6 +28,7 @@ import androidx.core.content.ContextCompat;
 import com.example.a_track.database.AppDatabase;
 import com.example.a_track.database.LocationTrack;
 import com.example.a_track.utils.ApiService;
+import com.example.a_track.utils.DeviceInfoHelper;
 import com.example.a_track.utils.SessionManager;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -245,9 +246,13 @@ public class CameraActivity extends AppCompatActivity {
 
         int battery = getBatteryLevel();
 
+        DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+
         String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
                 .format(new Date(dateTime));
         String photoFileName = mobileNumber + "_" + timestamp + ".jpg";
+
+
 
         LocationTrack track = new LocationTrack(
                 mobileNumber,
@@ -259,7 +264,18 @@ public class CameraActivity extends AppCompatActivity {
                 sessionId,
                 battery,
                 photoFileName,
-                remarks.isEmpty() ? null : remarks
+                remarks.isEmpty() ? null : remarks,
+                deviceInfo.getGpsState(),
+                deviceInfo.getInternetState(),
+                deviceInfo.getFlightState(),
+                deviceInfo.getRoamingState(),
+                deviceInfo.getIsNetThere(),
+                deviceInfo.getIsNwThere(),
+                deviceInfo.getIsMoving(speed),
+                deviceInfo.getModelNo(),
+                deviceInfo.getModelOS(),
+                deviceInfo.getApkName(),
+                deviceInfo.getImsiNo()
         );
 
         // Show progress

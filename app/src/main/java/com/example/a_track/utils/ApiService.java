@@ -86,6 +86,17 @@ public class ApiService {
                     if (t.getTextMsg() != null && !t.getTextMsg().isEmpty()) {
                         o.put("textMsg", t.getTextMsg());
                     }
+                    o.put("gpsState", t.getGpsState());
+                    o.put("internetState", t.getInternetState());
+                    o.put("flightState", t.getFlightState());
+                    o.put("roamingState", t.getRoamingState());
+                    o.put("isNetThere", t.getIsNetThere());
+                    o.put("isNwThere", t.getIsNwThere());
+                    o.put("isMoving", t.getIsMoving());
+                    o.put("modelNo", t.getModelNo());
+                    o.put("modelOS", t.getModelOS());
+                    o.put("apkName", t.getApkName());
+                    o.put("imsiNo", t.getImsiNo());
 
                     arr.put(o);
                 }
@@ -181,6 +192,17 @@ public class ApiService {
                 writeFormField(out, boundary, "speed", String.valueOf(track.getSpeed()));
                 writeFormField(out, boundary, "angle", String.valueOf(track.getAngle()));
                 writeFormField(out, boundary, "battery", String.valueOf(track.getBattery()));
+                writeFormField(out, boundary, "gpsState", track.getGpsState());
+                writeFormField(out, boundary, "internetState", track.getInternetState());
+                writeFormField(out, boundary, "flightState", track.getFlightState());
+                writeFormField(out, boundary, "roamingState", track.getRoamingState());
+                writeFormField(out, boundary, "isNetThere", track.getIsNetThere());
+                writeFormField(out, boundary, "isNwThere", track.getIsNwThere());
+                writeFormField(out, boundary, "isMoving", track.getIsMoving());
+                writeFormField(out, boundary, "modelNo", track.getModelNo());
+                writeFormField(out, boundary, "modelOS", track.getModelOS());
+                writeFormField(out, boundary, "apkName", track.getApkName());
+                writeFormField(out, boundary, "imsiNo", track.getImsiNo());
 
                 // Add text message if exists
                 if (track.getTextMsg() != null && !track.getTextMsg().isEmpty()) {
