@@ -311,11 +311,11 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     }
 
     private void updateLocationUI(Location location) {
-        tvLatitude.setText(String.format(Locale.getDefault(), "Latitude: %.6f", location.getLatitude()));
-        tvLongitude.setText(String.format(Locale.getDefault(), "Longitude: %.6f", location.getLongitude()));
-        tvSpeed.setText(String.format(Locale.getDefault(), "Speed: %.2f m/s", location.getSpeed()));
+        tvLatitude.setText(String.format(Locale.getDefault(), "Lat: %.2f", location.getLatitude()));
+        tvLongitude.setText(String.format(Locale.getDefault(), "Long: %.2f", location.getLongitude()));
+        tvSpeed.setText(String.format(Locale.getDefault(), "Spd: %.2f m/s", location.getSpeed()));
         tvAngle.setText(String.format(Locale.getDefault(), "Angle: %.0f°", location.getBearing()));
-        tvDateTime.setText("Date Time: " + dateFormat.format(new Date()));
+        tvDateTime.setText("DtTime: " + dateFormat.format(new Date()));
 
         // Update map
         updateMapLocation(location);

@@ -44,6 +44,18 @@ public class LocationTrack {
     @ColumnInfo(name = "textMsg")
     private String textMsg;
 
+    private String gpsState;
+    private String internetState;
+    private String flightState;
+    private String roamingState;
+    private String isNetThere;
+    private String isNwThere;
+    private String isMoving;
+    private String modelNo;
+    private String modelOS;
+    private String apkName;
+    private String imsiNo;
+
     // ✅ Constructor for NEW rows
     public LocationTrack(
             String mobileNumber,
@@ -55,7 +67,10 @@ public class LocationTrack {
             String sessionId,
             int battery,
             String photoPath,
-            String textMsg
+            String textMsg,String gpsState, String internetState, String flightState,
+            String roamingState, String isNetThere, String isNwThere,
+            String isMoving, String modelNo, String modelOS,
+            String apkName, String imsiNo
     ) {
         this.mobileNumber = mobileNumber;
         this.latitude = latitude;
@@ -68,105 +83,101 @@ public class LocationTrack {
         this.synced = 0;        // always unsynced when created
         this.photoPath = photoPath;
         this.textMsg = textMsg;
+        this.gpsState = gpsState;
+        this.internetState = internetState;
+        this.flightState = flightState;
+        this.roamingState = roamingState;
+        this.isNetThere = isNetThere;
+        this.isNwThere = isNwThere;
+        this.isMoving = isMoving;
+        this.modelNo = modelNo;
+        this.modelOS = modelOS;
+        this.apkName = apkName;
+        this.imsiNo = imsiNo;
     }
 
     /* =====================
        GETTERS & SETTERS
        ===================== */
 
-    public int getId() {
-        return id;
-    }
+    public int getId() {return id;}
 
-    public void setId(int id) {
-        this.id = id;
-    }
+    public void setId(int id) {this.id = id;}
 
-    public String getMobileNumber() {
-        return mobileNumber;
-    }
+    public String getMobileNumber() {return mobileNumber;}
 
-    public void setMobileNumber(String mobileNumber) {
-        this.mobileNumber = mobileNumber;
-    }
+    public void setMobileNumber(String mobileNumber) {this.mobileNumber = mobileNumber;}
 
-    public double getLatitude() {
-        return latitude;
-    }
+    public double getLatitude() {return latitude;}
 
-    public void setLatitude(double latitude) {
-        this.latitude = latitude;
-    }
+    public void setLatitude(double latitude) {this.latitude = latitude;}
 
-    public double getLongitude() {
-        return longitude;
-    }
+    public double getLongitude() {return longitude;}
 
-    public void setLongitude(double longitude) {
-        this.longitude = longitude;
-    }
+    public void setLongitude(double longitude) {this.longitude = longitude;}
 
-    public float getSpeed() {
-        return speed;
-    }
+    public float getSpeed() {return speed;}
 
-    public void setSpeed(float speed) {
-        this.speed = speed;
-    }
+    public void setSpeed(float speed) {this.speed = speed;}
 
-    public float getAngle() {
-        return angle;
-    }
+    public float getAngle() {return angle;}
 
-    public void setAngle(float angle) {
-        this.angle = angle;
-    }
+    public void setAngle(float angle) {this.angle = angle;}
 
-    public long getDateTime() {
-        return dateTime;
-    }
+    public long getDateTime() {return dateTime;}
 
-    public void setDateTime(long dateTime) {
-        this.dateTime = dateTime;
-    }
+    public void setDateTime(long dateTime) {this.dateTime = dateTime;}
 
-    public String getSessionId() {
-        return sessionId;
-    }
+    public String getSessionId() {return sessionId;}
 
-    public void setSessionId(String sessionId) {
-        this.sessionId = sessionId;
-    }
+    public void setSessionId(String sessionId) {this.sessionId = sessionId;}
 
-    public int getBattery() {
-        return battery;
-    }
+    public int getBattery() {return battery;}
 
-    public void setBattery(int battery) {
-        this.battery = battery;
-    }
+    public void setBattery(int battery) {this.battery = battery;}
 
-    public int getSynced() {
-        return synced;
-    }
+    public int getSynced() {return synced;}
 
-    public void setSynced(int synced) {
-        this.synced = synced;
-    }
+    public void setSynced(int synced) {this.synced = synced;}
 
-    public String getPhotoPath() {
-        return photoPath;
-    }
+    public String getPhotoPath() {return photoPath;}
 
-    public void setPhotoPath(String photoPath) {
-        this.photoPath = photoPath;
-    }
+    public void setPhotoPath(String photoPath) {this.photoPath = photoPath;}
 
-    public String getTextMsg() {
-        return textMsg;
-    }
+    public String getTextMsg() {return textMsg;}
 
-    public void setTextMsg(String textMsg) {
-        this.textMsg = textMsg;
-    }
+    public void setTextMsg(String textMsg) {this.textMsg = textMsg;}
+
+    public String getGpsState() { return gpsState; }
+    public void setGpsState(String gpsState) { this.gpsState = gpsState; }
+
+    public String getInternetState() { return internetState; }
+    public void setInternetState(String internetState) { this.internetState = internetState; }
+
+    public String getFlightState() { return flightState; }
+    public void setFlightState(String flightState) { this.flightState = flightState; }
+
+    public String getRoamingState() { return roamingState; }
+    public void setRoamingState(String roamingState) { this.roamingState = roamingState; }
+
+    public String getIsNetThere() { return isNetThere; }
+    public void setIsNetThere(String isNetThere) { this.isNetThere = isNetThere; }
+
+    public String getIsNwThere() { return isNwThere; }
+    public void setIsNwThere(String isNwThere) { this.isNwThere = isNwThere; }
+
+    public String getIsMoving() { return isMoving; }
+    public void setIsMoving(String isMoving) { this.isMoving = isMoving; }
+
+    public String getModelNo() { return modelNo; }
+    public void setModelNo(String modelNo) { this.modelNo = modelNo; }
+
+    public String getModelOS() { return modelOS; }
+    public void setModelOS(String modelOS) { this.modelOS = modelOS; }
+
+    public String getApkName() { return apkName; }
+    public void setApkName(String apkName) { this.apkName = apkName; }
+
+    public String getImsiNo() { return imsiNo; }
+    public void setImsiNo(String imsiNo) { this.imsiNo = imsiNo; }
 }

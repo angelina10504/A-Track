@@ -29,6 +29,7 @@ import com.example.a_track.database.AppDatabase;
 import com.example.a_track.database.LocationTrack;
 import com.example.a_track.utils.ApiService;
 import com.example.a_track.utils.SessionManager;
+import com.example.a_track.utils.DeviceInfoHelper;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
@@ -293,6 +294,8 @@ public class LocationTrackingService extends Service {
         long currentTime = location.getTime();
         int battery = getBatteryLevel();
 
+        DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+
         LocationTrack track = new LocationTrack(
                 mobileNumber,
                 location.getLatitude(),
@@ -303,7 +306,18 @@ public class LocationTrackingService extends Service {
                 sessionId,
                 battery,
                 null,
-                null
+                null,
+                deviceInfo.getGpsState(),
+                deviceInfo.getInternetState(),
+                deviceInfo.getFlightState(),
+                deviceInfo.getRoamingState(),
+                deviceInfo.getIsNetThere(),
+                deviceInfo.getIsNwThere(),
+                deviceInfo.getIsMoving(location.getSpeed()),
+                deviceInfo.getModelNo(),
+                deviceInfo.getModelOS(),
+                deviceInfo.getApkName(),
+                deviceInfo.getImsiNo()
         );
 
         executorService.execute(() -> {
@@ -311,9 +325,7 @@ public class LocationTrackingService extends Service {
                 db.locationTrackDao().insert(track);
                 lastSavedLocation = new Location(locationToSave);
 
-                Log.d(TAG, "✓ Location saved: Lat=" + location.getLatitude() +
-                        ", Lng=" + location.getLongitude() +
-                        ", Battery=" + battery + "%");
+                Log.d(TAG, "✓ Location saved with device info");
             } catch (Exception e) {
                 Log.e(TAG, "Error saving location: " + e.getMessage());
             }
