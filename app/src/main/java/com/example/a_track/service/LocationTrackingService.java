@@ -300,7 +300,7 @@ public class LocationTrackingService extends Service {
                 mobileNumber,
                 location.getLatitude(),
                 location.getLongitude(),
-                location.getSpeed(),
+                location.getSpeed() * 3.6f,
                 location.getBearing(),
                 currentTime,
                 sessionId,
