@@ -35,12 +35,12 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
         String dateTime = dateFormat.format(new Date(track.getDateTime()));
         holder.tvTrackDateTime.setText(dateTime);
 
-        String location = String.format(Locale.getDefault(), "Lat: %.2f, Lng: %.2f",
+        String location = String.format(Locale.getDefault(), "Lat: %.3f, Lng: %.3f",
                 track.getLatitude(), track.getLongitude());
         holder.tvTrackLocation.setText(location);
 
-        String speed = String.format(Locale.getDefault(), "Sp: %.2f m/s",
-                track.getSpeed());
+        String speed = String.format(Locale.getDefault(), "%.2f km/h",
+                track.getSpeed()*3.6f);
         holder.tvTrackSpeed.setText(speed);
 
     }
