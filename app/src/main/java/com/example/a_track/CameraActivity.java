@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -50,13 +51,15 @@ public class CameraActivity extends AppCompatActivity {
     private static final int CAMERA_PERMISSION_CODE = 100;
 
     private PreviewView previewView;
+    private ImageView ivPhotoPreview;
     private TextInputEditText etRemarks;
-    private Button btnCapture, btnSend;
+    private Button btnCapture, btnSend, btnRetake;
     private TextView tvLocationInfo;
 
     private ImageCapture imageCapture;
     private File capturedImageFile;
     private ExecutorService cameraExecutor;
+    private ProcessCameraProvider cameraProvider;
 
     // Location data from intent
     private double latitude;
@@ -91,9 +94,11 @@ public class CameraActivity extends AppCompatActivity {
 
     private void initViews() {
         previewView = findViewById(R.id.previewView);
+        ivPhotoPreview = findViewById(R.id.ivPhotoPreview);
         etRemarks = findViewById(R.id.etRemarks);
         btnCapture = findViewById(R.id.btnCapture);
         btnSend = findViewById(R.id.btnSend);
+        btnRetake = findViewById(R.id.btnRetake);
         tvLocationInfo = findViewById(R.id.tvLocationInfo);
     }
 
@@ -111,6 +116,7 @@ public class CameraActivity extends AppCompatActivity {
     private void setupClickListeners() {
         btnCapture.setOnClickListener(v -> capturePhoto());
 
+        btnRetake.setOnClickListener(v -> retakePhoto());
         btnSend.setOnClickListener(v -> {
             String remarks = etRemarks.getText() != null ?
                     etRemarks.getText().toString().trim() : "";
@@ -149,7 +155,7 @@ public class CameraActivity extends AppCompatActivity {
 
         cameraProviderFuture.addListener(() -> {
             try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                cameraProvider = cameraProviderFuture.get();
                 bindCameraUseCases(cameraProvider);
             } catch (ExecutionException | InterruptedException e) {
                 Log.e(TAG, "Error starting camera: " + e.getMessage());
@@ -211,6 +217,7 @@ public class CameraActivity extends AppCompatActivity {
                         runOnUiThread(() -> {
                             capturedImageFile = photoFile;
                             Log.d(TAG, "Photo saved: " + photoFile.getAbsolutePath());
+                            showPhotoPreview(photoFile);
                             Toast.makeText(CameraActivity.this,
                                     "Photo captured!", Toast.LENGTH_SHORT).show();
 
@@ -229,6 +236,78 @@ public class CameraActivity extends AppCompatActivity {
                         });
                     }
                 });
+    }
+
+    private void showPhotoPreview(File photoFile) {
+        try {
+            // Load and display the captured photo
+            Bitmap bitmap = loadAndRotateBitmap(photoFile.getAbsolutePath());
+            ivPhotoPreview.setImageBitmap(bitmap);
+
+            // Hide camera preview, show photo preview
+            previewView.setVisibility(View.GONE);
+            ivPhotoPreview.setVisibility(View.VISIBLE);
+
+            // Update buttons
+            btnCapture.setVisibility(View.GONE);
+            btnRetake.setVisibility(View.VISIBLE);
+            btnSend.setVisibility(View.VISIBLE);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing preview: " + e.getMessage());
+            Toast.makeText(this, "Error showing preview", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void retakePhoto() {
+        // Delete the captured photo
+        if (capturedImageFile != null && capturedImageFile.exists()) {
+            capturedImageFile.delete();
+            capturedImageFile = null;
+        }
+
+        // Show camera preview again
+        previewView.setVisibility(View.VISIBLE);
+        ivPhotoPreview.setVisibility(View.GONE);
+
+        // Update buttons
+        btnCapture.setVisibility(View.VISIBLE);
+        btnRetake.setVisibility(View.GONE);
+        btnSend.setVisibility(View.GONE);
+
+        // Clear remarks
+        etRemarks.setText("");
+    }
+
+    private Bitmap loadAndRotateBitmap(String photoPath) throws IOException {
+        // Load bitmap with scaling to avoid memory issues
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 2; // Scale down by 2x for preview
+        Bitmap bitmap = BitmapFactory.decodeFile(photoPath, options);
+
+        // Check EXIF orientation
+        ExifInterface exif = new ExifInterface(photoPath);
+        int orientation = exif.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+        );
+
+        // Rotate if needed
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.postRotate(90);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.postRotate(180);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.postRotate(270);
+                break;
+        }
+
+        return Bitmap.createBitmap(bitmap, 0, 0,
+                bitmap.getWidth(), bitmap.getHeight(), matrix, true);
     }
 
     private void savePhotoRecord(String remarks) {
