@@ -86,6 +86,7 @@ public class ApiService {
                     if (t.getTextMsg() != null && !t.getTextMsg().isEmpty()) {
                         o.put("textMsg", t.getTextMsg());
                     }
+                    o.put("mobileTime", t.getMobileTime());
                     o.put("gpsState", t.getGpsState());
                     o.put("internetState", t.getInternetState());
                     o.put("flightState", t.getFlightState());
@@ -187,6 +188,7 @@ public class ApiService {
                 // Add required form fields
                 writeFormField(out, boundary, "mobileNumber", track.getMobileNumber());
                 writeFormField(out, boundary, "dateTime", String.valueOf(track.getDateTime()));
+                writeFormField(out, boundary, "mobileTime", String.valueOf(track.getMobileTime()));
                 writeFormField(out, boundary, "latitude", String.valueOf(track.getLatitude()));
                 writeFormField(out, boundary, "longitude", String.valueOf(track.getLongitude()));
                 writeFormField(out, boundary, "speed", String.valueOf(track.getSpeed()));

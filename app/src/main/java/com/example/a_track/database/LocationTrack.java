@@ -58,6 +58,7 @@ public class LocationTrack {
     private String modelOS;
     private String apkName;
     private String imsiNo;
+    private long mobileTime;
 
     // ✅ Constructor for NEW rows
     public LocationTrack(
@@ -73,7 +74,7 @@ public class LocationTrack {
             String textMsg,String gpsState, String internetState, String flightState,
             String roamingState, String isNetThere, String isNwThere,
             String isMoving, String modelNo, String modelOS,
-            String apkName, String imsiNo
+            String apkName, String imsiNo, long mobileTime
     ) {
         this.mobileNumber = mobileNumber;
         this.latitude = latitude;
@@ -97,6 +98,7 @@ public class LocationTrack {
         this.modelOS = modelOS;
         this.apkName = apkName;
         this.imsiNo = imsiNo;
+        this.mobileTime = mobileTime;
     }
 
     /* =====================
@@ -191,4 +193,8 @@ public class LocationTrack {
     public void setPhotoSynced(int photoSynced) {
         this.photoSynced = photoSynced;
     }
+
+    public long getMobileTime() {return mobileTime;}
+
+    public void setMobileTime(long mobileTime) {this.mobileTime = mobileTime;}
 }
