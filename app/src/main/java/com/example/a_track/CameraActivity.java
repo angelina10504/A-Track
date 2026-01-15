@@ -1,6 +1,7 @@
 package com.example.a_track;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -10,6 +11,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -49,13 +51,15 @@ public class CameraActivity extends AppCompatActivity {
     private static final int CAMERA_PERMISSION_CODE = 100;
 
     private PreviewView previewView;
+    private ImageView ivPhotoPreview;
     private TextInputEditText etRemarks;
-    private Button btnCapture, btnSend;
+    private Button btnCapture, btnSend, btnRetake;
     private TextView tvLocationInfo;
 
     private ImageCapture imageCapture;
     private File capturedImageFile;
     private ExecutorService cameraExecutor;
+    private ProcessCameraProvider cameraProvider;
 
     // Location data from intent
     private double latitude;
@@ -90,9 +94,11 @@ public class CameraActivity extends AppCompatActivity {
 
     private void initViews() {
         previewView = findViewById(R.id.previewView);
+        ivPhotoPreview = findViewById(R.id.ivPhotoPreview);
         etRemarks = findViewById(R.id.etRemarks);
         btnCapture = findViewById(R.id.btnCapture);
         btnSend = findViewById(R.id.btnSend);
+        btnRetake = findViewById(R.id.btnRetake);
         tvLocationInfo = findViewById(R.id.tvLocationInfo);
     }
 
@@ -110,6 +116,7 @@ public class CameraActivity extends AppCompatActivity {
     private void setupClickListeners() {
         btnCapture.setOnClickListener(v -> capturePhoto());
 
+        btnRetake.setOnClickListener(v -> retakePhoto());
         btnSend.setOnClickListener(v -> {
             String remarks = etRemarks.getText() != null ?
                     etRemarks.getText().toString().trim() : "";
@@ -148,7 +155,7 @@ public class CameraActivity extends AppCompatActivity {
 
         cameraProviderFuture.addListener(() -> {
             try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                cameraProvider = cameraProviderFuture.get();
                 bindCameraUseCases(cameraProvider);
             } catch (ExecutionException | InterruptedException e) {
                 Log.e(TAG, "Error starting camera: " + e.getMessage());
@@ -210,6 +217,7 @@ public class CameraActivity extends AppCompatActivity {
                         runOnUiThread(() -> {
                             capturedImageFile = photoFile;
                             Log.d(TAG, "Photo saved: " + photoFile.getAbsolutePath());
+                            showPhotoPreview(photoFile);
                             Toast.makeText(CameraActivity.this,
                                     "Photo captured!", Toast.LENGTH_SHORT).show();
 
@@ -230,6 +238,78 @@ public class CameraActivity extends AppCompatActivity {
                 });
     }
 
+    private void showPhotoPreview(File photoFile) {
+        try {
+            // Load and display the captured photo
+            Bitmap bitmap = loadAndRotateBitmap(photoFile.getAbsolutePath());
+            ivPhotoPreview.setImageBitmap(bitmap);
+
+            // Hide camera preview, show photo preview
+            previewView.setVisibility(View.GONE);
+            ivPhotoPreview.setVisibility(View.VISIBLE);
+
+            // Update buttons
+            btnCapture.setVisibility(View.GONE);
+            btnRetake.setVisibility(View.VISIBLE);
+            btnSend.setVisibility(View.VISIBLE);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing preview: " + e.getMessage());
+            Toast.makeText(this, "Error showing preview", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void retakePhoto() {
+        // Delete the captured photo
+        if (capturedImageFile != null && capturedImageFile.exists()) {
+            capturedImageFile.delete();
+            capturedImageFile = null;
+        }
+
+        // Show camera preview again
+        previewView.setVisibility(View.VISIBLE);
+        ivPhotoPreview.setVisibility(View.GONE);
+
+        // Update buttons
+        btnCapture.setVisibility(View.VISIBLE);
+        btnRetake.setVisibility(View.GONE);
+        btnSend.setVisibility(View.GONE);
+
+        // Clear remarks
+        etRemarks.setText("");
+    }
+
+    private Bitmap loadAndRotateBitmap(String photoPath) throws IOException {
+        // Load bitmap with scaling to avoid memory issues
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 2; // Scale down by 2x for preview
+        Bitmap bitmap = BitmapFactory.decodeFile(photoPath, options);
+
+        // Check EXIF orientation
+        ExifInterface exif = new ExifInterface(photoPath);
+        int orientation = exif.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+        );
+
+        // Rotate if needed
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.postRotate(90);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.postRotate(180);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.postRotate(270);
+                break;
+        }
+
+        return Bitmap.createBitmap(bitmap, 0, 0,
+                bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+    }
+
     private void savePhotoRecord(String remarks) {
         if (capturedImageFile == null) {
             Toast.makeText(this, "No photo captured", Toast.LENGTH_SHORT).show();
@@ -245,15 +325,9 @@ public class CameraActivity extends AppCompatActivity {
         }
 
         int battery = getBatteryLevel();
-
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
 
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                .format(new Date(dateTime));
-        String photoFileName = mobileNumber + "_" + timestamp + ".jpg";
-
-
-
+        // ✅ Create record with local photo path
         LocationTrack track = new LocationTrack(
                 mobileNumber,
                 latitude,
@@ -263,7 +337,7 @@ public class CameraActivity extends AppCompatActivity {
                 dateTime,
                 sessionId,
                 battery,
-                photoFileName,
+                capturedImageFile.getAbsolutePath(), // ✅ Local path stored
                 remarks.isEmpty() ? null : remarks,
                 deviceInfo.getGpsState(),
                 deviceInfo.getInternetState(),
@@ -278,49 +352,78 @@ public class CameraActivity extends AppCompatActivity {
                 deviceInfo.getImsiNo()
         );
 
-        // Show progress
-        Toast.makeText(this, "Saving and uploading photo...", Toast.LENGTH_SHORT).show();
+        // ✅ Save locally first (always works)
+        Toast.makeText(this, "Saving photo...", Toast.LENGTH_SHORT).show();
 
-        // Save to local database first
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(() -> {
             try {
+                // ✅ Save to local database
                 long recordId = db.locationTrackDao().insert(track);
                 track.setId((int) recordId);
 
-                Log.d(TAG, "Photo record saved locally with ID: " + recordId);
-                Log.d(TAG, "Photo filename: " + photoFileName);
+                Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId);
+                Log.d(TAG, "✓ Local photo path: " + capturedImageFile.getAbsolutePath());
 
-                // Upload to server
-                ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
-                    @Override
-                    public void onSuccess(String photoPath) {
-                        runOnUiThread(() -> {
-                            Toast.makeText(CameraActivity.this,
-                                    "✓ Photo uploaded successfully!", Toast.LENGTH_SHORT).show();
-                            finish();
-                        });
-                    }
+                // ✅ Try to upload immediately if online
+                if (isNetworkAvailable()) {
+                    Log.d(TAG, "📡 Network available, attempting immediate upload");
 
-                    @Override
-                    public void onFailure(String error) {
-                        runOnUiThread(() -> {
-                            Toast.makeText(CameraActivity.this,
-                                    "✓ Saved locally. Will sync later: " + error,
-                                    Toast.LENGTH_LONG).show();
-                            finish();
-                        });
-                    }
-                });
+                    ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
+                        @Override
+                        public void onSuccess(String photoPath) {
+                            // Mark photo as synced in database
+                            executorService.execute(() -> {
+                                db.locationTrackDao().markPhotoAsSynced(track.getId());
+
+                                // Delete local file after successful upload
+                                if (capturedImageFile.delete()) {
+                                    Log.d(TAG, "✓ Photo uploaded and local copy deleted");
+                                }
+                            });
+
+                            runOnUiThread(() -> {
+                                Toast.makeText(CameraActivity.this,
+                                        "✓ Photo uploaded successfully!", Toast.LENGTH_SHORT).show();
+                                finish();
+                            });
+                        }
+
+                        @Override
+                        public void onFailure(String error) {
+                            Log.w(TAG, "⚠ Immediate upload failed: " + error);
+                            runOnUiThread(() -> {
+                                Toast.makeText(CameraActivity.this,
+                                        "✓ Saved locally. Will sync when online.", Toast.LENGTH_LONG).show();
+                                finish();
+                            });
+                        }
+                    });
+                } else {
+                    // ✅ No network - photo will be synced later by service
+                    Log.d(TAG, "📴 No network. Photo will sync later.");
+                    runOnUiThread(() -> {
+                        Toast.makeText(CameraActivity.this,
+                                "✓ Saved locally. Will sync when online.", Toast.LENGTH_LONG).show();
+                        finish();
+                    });
+                }
 
             } catch (Exception e) {
-                Log.e(TAG, "Error saving photo record: " + e.getMessage());
+                Log.e(TAG, "✗ Error saving photo record: " + e.getMessage());
                 runOnUiThread(() -> {
                     Toast.makeText(CameraActivity.this,
-                            "Failed to save record", Toast.LENGTH_SHORT).show();
+                            "Failed to save photo", Toast.LENGTH_SHORT).show();
                 });
             }
         });
+    }
+
+    private boolean isNetworkAvailable() {
+        android.net.ConnectivityManager cm =
+                (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        android.net.NetworkInfo networkInfo = cm.getActiveNetworkInfo();
+        return networkInfo != null && networkInfo.isConnected();
     }
 
     private int getBatteryLevel() {

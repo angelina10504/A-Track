@@ -60,8 +60,23 @@ public interface LocationTrackDao {
     @Query("UPDATE location_tracks SET synced = 1 WHERE id IN (:ids)")
     void markAsSynced(List<Integer> ids);
 
+    // Get records with unsynced photos
+    @Query("SELECT * FROM location_tracks " +
+            "WHERE mobileNumber = :mobile " +
+            "AND photoPath IS NOT NULL " +
+            "AND photoPath != '' " +
+            "AND photoSynced = 0 " +
+            "ORDER BY dateTime ASC")
+    List<LocationTrack> getUnsyncedPhotos(String mobile);
+
+    @Query("UPDATE location_tracks SET photoSynced = 1 WHERE id = :id")
+    void markPhotoAsSynced(int id);
+
     // Cleanup only ALREADY SYNCED old records
-    @Query("DELETE FROM location_tracks WHERE synced = 1 AND dateTime < :todayStartMillis")
+    @Query("DELETE FROM location_tracks " +
+            "WHERE synced = 1 " +
+            "AND (photoPath IS NULL OR photoPath = '' OR photoSynced = 1) " +
+            "AND dateTime < :todayStartMillis")
     int deleteOldTracks(long todayStartMillis);
 
     // ---------------- OPTIONAL EXPORT / DEBUG ----------------
@@ -81,4 +96,5 @@ public interface LocationTrackDao {
             long startTime,
             long endTime
     );
+
 }

@@ -1,48 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@android:color/black">
+    android:background="#000000">
 
     <!-- Camera Preview -->
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_height="match_parent" />
 
-    <!-- Bottom Control Panel -->
+    <!-- ✅ NEW: Photo Preview (hidden initially) -->
+    <ImageView
+        android:id="@+id/ivPhotoPreview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:visibility="gone"
+        android:contentDescription="Photo Preview" />
+
+    <!-- Top Info Bar -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:background="#80000000"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tvLocationInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Location: --"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+
+    <!-- Bottom Controls -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:background="#80000000"
         android:orientation="vertical"
-        android:background="@android:color/white"
         android:padding="16dp">
 
         <!-- Remarks Input -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Enter Remarks (Max 100 chars)"
-            android:layout_marginBottom="16dp">
+            android:hint="Add remarks (optional)"
+            android:textColorHint="#CCCCCC"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etRemarks"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:maxLength="100"
                 android:inputType="text"
-                android:lines="2"
-                android:maxLines="2"/>
+                android:maxLines="3"
+                android:textColor="#FFFFFF" />
+
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Buttons Row -->
+        <!-- Buttons -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center">
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:orientation="horizontal">
 
             <!-- Capture Button -->
             <Button
@@ -50,32 +80,36 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="📷 Capture"
                 android:layout_marginEnd="8dp"
-                android:backgroundTint="@color/material_dynamic_primary30"/>
+                android:text="📷 Capture"
+                android:textSize="16sp"
+                android:backgroundTint="#4CAF50" />
 
-            <!-- Send Button (Initially Hidden) -->
+            <!-- ✅ NEW: Retake Button (hidden initially) -->
+            <Button
+                android:id="@+id/btnRetake"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:text="Retake"
+                android:textSize="16sp"
+                android:backgroundTint="#FF9800"
+                android:visibility="gone" />
+
+            <!-- Send Button (hidden initially) -->
             <Button
                 android:id="@+id/btnSend"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="✓ Send"
-                android:visibility="gone"
-                android:backgroundTint="@android:color/holo_green_dark"/>
+                android:text="Send"
+                android:textSize="16sp"
+                android:backgroundTint="#2196F3"
+                android:visibility="gone" />
 
         </LinearLayout>
 
-        <!-- Location Info (Optional Display) -->
-        <TextView
-            android:id="@+id/tvLocationInfo"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Location: Loading..."
-            android:textSize="12sp"
-            android:layout_marginTop="8dp"
-            android:textColor="@android:color/darker_gray"/>
-
     </LinearLayout>
 
-</LinearLayout>
+</RelativeLayout>
