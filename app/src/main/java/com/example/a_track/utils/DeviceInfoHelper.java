@@ -150,4 +150,7 @@ public class DeviceInfoHelper {
         }
         return "";
     }
+    public long getMobileTime() {
+        return System.currentTimeMillis();
+    }
 }

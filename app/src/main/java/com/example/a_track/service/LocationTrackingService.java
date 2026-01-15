@@ -295,6 +295,7 @@ public class LocationTrackingService extends Service {
         int battery = getBatteryLevel();
 
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+        long mobileTime = deviceInfo.getMobileTime();
 
         LocationTrack track = new LocationTrack(
                 mobileNumber,
@@ -317,7 +318,8 @@ public class LocationTrackingService extends Service {
                 deviceInfo.getModelNo(),
                 deviceInfo.getModelOS(),
                 deviceInfo.getApkName(),
-                deviceInfo.getImsiNo()
+                deviceInfo.getImsiNo(),
+                mobileTime
         );
 
         executorService.execute(() -> {
