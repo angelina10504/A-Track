@@ -337,53 +337,45 @@ public class LocationTrackingService extends Service {
         if (mobile == null) return;
 
         executorService.execute(() -> {
-            List<LocationTrack> tracks = db.locationTrackDao().getAllTracksSync(mobile);
+            // ✅ Step 1: Sync location data first (without photos)
+            List<LocationTrack> unsyncedTracks = db.locationTrackDao().getUnsyncedTracks(mobile);
 
-            if (tracks.isEmpty()) {
-                Log.d(TAG, "No data to sync");
-                return;
+            if (!unsyncedTracks.isEmpty()) {
+                Log.d(TAG, "📍 Syncing " + unsyncedTracks.size() + " location records");
+
+                ApiService.syncLocations(unsyncedTracks, new ApiService.SyncCallback() {
+                    @Override
+                    public void onSuccess(int syncedCount, List<Integer> syncedIds) {
+                        Log.d(TAG, "✓ Successfully synced " + syncedCount + " locations");
+
+                        executorService.execute(() -> {
+                            // Mark location data as synced
+                            if (!syncedIds.isEmpty()) {
+                                db.locationTrackDao().markAsSynced(syncedIds);
+                                Log.d(TAG, "✓ Marked " + syncedIds.size() + " location records as synced");
+                            }
+
+                            // ✅ Step 2: Now sync photos
+                            syncPendingPhotos();
+
+                            // ✅ Step 3: Clean up old records
+                            cleanupOldRecords();
+                        });
+                    }
+
+                    @Override
+                    public void onFailure(String error) {
+                        Log.e(TAG, "✗ Location sync failed: " + error);
+                        // Still try to sync photos even if location sync fails
+                        syncPendingPhotos();
+                    }
+                });
+            } else {
+                Log.d(TAG, "No location data to sync, checking for photos...");
+                // No location data to sync, but check for pending photos
+                syncPendingPhotos();
+                cleanupOldRecords();
             }
-
-            Log.d(TAG, "Checking for unsynced data...");
-
-            ApiService.syncLocations(tracks, new ApiService.SyncCallback() {
-                @Override
-                public void onSuccess(int syncedCount, List<Integer> syncedIds) {
-                    Log.d(TAG, "✓ Successfully synced " + syncedCount + " locations");
-
-                    executorService.execute(() -> {
-                        // Mark newly synced records
-                        if (!syncedIds.isEmpty()) {
-                            db.locationTrackDao().markAsSynced(syncedIds);
-                            Log.d(TAG, "✓ Marked " + syncedIds.size() + " records as synced");
-                        }
-
-                        // ✅ DELETE ALL synced records NOT from today
-                        // Get today's start time (00:00:00)
-                        java.util.Calendar calendar = java.util.Calendar.getInstance();
-                        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0);
-                        calendar.set(java.util.Calendar.MINUTE, 0);
-                        calendar.set(java.util.Calendar.SECOND, 0);
-                        calendar.set(java.util.Calendar.MILLISECOND, 0);
-                        long todayStartMillis = calendar.getTimeInMillis();
-
-                        Log.d(TAG, "========== DELETION DEBUG ==========");
-                        Log.d(TAG, "Today's date: " + new java.util.Date(System.currentTimeMillis()));
-                        Log.d(TAG, "Today start (00:00): " + new java.util.Date(todayStartMillis));
-                        Log.d(TAG, "Deleting synced records before: " + new java.util.Date(todayStartMillis));
-
-                        // Delete all synced records older than today
-                        int deleted = db.locationTrackDao().deleteOldTracks(todayStartMillis);
-                        Log.d(TAG, "✓ Deleted " + deleted + " old synced records (before today)");
-                        Log.d(TAG, "====================================");
-                    });
-                }
-
-                @Override
-                public void onFailure(String error) {
-                    Log.e(TAG, "✗ Sync failed: " + error);
-                }
-            });
         });
     }
 
@@ -392,35 +384,83 @@ public class LocationTrackingService extends Service {
         if (mobile == null) return;
 
         executorService.execute(() -> {
-            // Get all records with photos that haven't been synced
-            List<LocationTrack> allTracks = db.locationTrackDao().getAllTracksSync(mobile);
+            // ✅ Get all records with unsynced photos using new query
+            List<LocationTrack> unsyncedPhotos = db.locationTrackDao().getUnsyncedPhotos(mobile);
 
-            for (LocationTrack track : allTracks) {
-                if (track.getPhotoPath() != null && !track.getPhotoPath().isEmpty()
-                        && track.getSynced() == 0) {
+            if (unsyncedPhotos.isEmpty()) {
+                Log.d(TAG, "✓ No pending photos to sync");
+                return;
+            }
 
-                    File photoFile = new File(track.getPhotoPath());
-                    if (photoFile.exists()) {
-                        Log.d(TAG, "📤 Syncing pending photo: " + photoFile.getName());
+            Log.d(TAG, "📸 Found " + unsyncedPhotos.size() + " photos to sync");
 
-                        ApiService.uploadPhoto(track, photoFile, new ApiService.PhotoUploadCallback() {
-                            @Override
-                            public void onSuccess(String photoPath) {
-                                executorService.execute(() -> {
-                                    List<Integer> ids = new ArrayList<>();
-                                    ids.add(track.getId());
-                                    db.locationTrackDao().markAsSynced(ids);
-                                    Log.d(TAG, "✓ Photo synced: " + photoFile.getName());
-                                });
-                            }
+            for (LocationTrack track : unsyncedPhotos) {
+                File photoFile = new File(track.getPhotoPath());
 
-                            @Override
-                            public void onFailure(String error) {
-                                Log.e(TAG, "✗ Photo sync failed: " + error);
+                // Check if file exists
+                if (!photoFile.exists()) {
+                    Log.w(TAG, "⚠ Photo file missing, marking as synced: " + track.getPhotoPath());
+                    // Mark as synced anyway to prevent repeated attempts
+                    db.locationTrackDao().markPhotoAsSynced(track.getId());
+                    continue;
+                }
+
+                Log.d(TAG, "📤 Uploading photo: " + photoFile.getName() + " (" + photoFile.length() + " bytes)");
+
+                // Upload photo
+                ApiService.uploadPhoto(track, photoFile, new ApiService.PhotoUploadCallback() {
+                    @Override
+                    public void onSuccess(String photoPath) {
+                        executorService.execute(() -> {
+                            // ✅ Mark photo as synced
+                            db.locationTrackDao().markPhotoAsSynced(track.getId());
+                            Log.d(TAG, "✓ Photo synced successfully: " + photoFile.getName());
+
+                            // ✅ Delete local photo after successful upload
+                            if (photoFile.delete()) {
+                                Log.d(TAG, "✓ Local photo deleted: " + photoFile.getName());
+                            } else {
+                                Log.w(TAG, "⚠ Could not delete local photo: " + photoFile.getName());
                             }
                         });
                     }
+
+                    @Override
+                    public void onFailure(String error) {
+                        Log.e(TAG, "✗ Photo upload failed (will retry): " + photoFile.getName() + " - " + error);
+                        // Don't mark as synced - will retry on next sync
+                    }
+                });
+
+                // Add small delay between uploads to avoid overwhelming server
+                try {
+                    Thread.sleep(1000); // 1 second delay between photos
+                } catch (InterruptedException e) {
+                    Log.e(TAG, "Sleep interrupted: " + e.getMessage());
                 }
+            }
+        });
+    }
+
+    private void cleanupOldRecords() {
+        executorService.execute(() -> {
+            // Get today's start time (00:00:00)
+            java.util.Calendar calendar = java.util.Calendar.getInstance();
+            calendar.set(java.util.Calendar.HOUR_OF_DAY, 0);
+            calendar.set(java.util.Calendar.MINUTE, 0);
+            calendar.set(java.util.Calendar.SECOND, 0);
+            calendar.set(java.util.Calendar.MILLISECOND, 0);
+            long todayStartMillis = calendar.getTimeInMillis();
+
+            Log.d(TAG, "🧹 Cleaning up old records before: " + new java.util.Date(todayStartMillis));
+
+            // ✅ This now only deletes records where BOTH location AND photo are synced
+            int deleted = db.locationTrackDao().deleteOldTracks(todayStartMillis);
+
+            if (deleted > 0) {
+                Log.d(TAG, "✓ Deleted " + deleted + " old synced records");
+            } else {
+                Log.d(TAG, "✓ No old records to delete");
             }
         });
     }

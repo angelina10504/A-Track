@@ -44,6 +44,9 @@ public class LocationTrack {
     @ColumnInfo(name = "textMsg")
     private String textMsg;
 
+    @ColumnInfo(name = "photoSynced")
+    private int photoSynced = 0;
+
     private String gpsState;
     private String internetState;
     private String flightState;
@@ -180,4 +183,12 @@ public class LocationTrack {
 
     public String getImsiNo() { return imsiNo; }
     public void setImsiNo(String imsiNo) { this.imsiNo = imsiNo; }
+
+    public int getPhotoSynced() {
+        return photoSynced;
+    }
+
+    public void setPhotoSynced(int photoSynced) {
+        this.photoSynced = photoSynced;
+    }
 }

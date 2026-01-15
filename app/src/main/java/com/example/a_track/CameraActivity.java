@@ -1,6 +1,7 @@
 package com.example.a_track;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -245,15 +246,9 @@ public class CameraActivity extends AppCompatActivity {
         }
 
         int battery = getBatteryLevel();
-
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
 
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                .format(new Date(dateTime));
-        String photoFileName = mobileNumber + "_" + timestamp + ".jpg";
-
-
-
+        // ✅ Create record with local photo path
         LocationTrack track = new LocationTrack(
                 mobileNumber,
                 latitude,
@@ -263,7 +258,7 @@ public class CameraActivity extends AppCompatActivity {
                 dateTime,
                 sessionId,
                 battery,
-                photoFileName,
+                capturedImageFile.getAbsolutePath(), // ✅ Local path stored
                 remarks.isEmpty() ? null : remarks,
                 deviceInfo.getGpsState(),
                 deviceInfo.getInternetState(),
@@ -278,49 +273,78 @@ public class CameraActivity extends AppCompatActivity {
                 deviceInfo.getImsiNo()
         );
 
-        // Show progress
-        Toast.makeText(this, "Saving and uploading photo...", Toast.LENGTH_SHORT).show();
+        // ✅ Save locally first (always works)
+        Toast.makeText(this, "Saving photo...", Toast.LENGTH_SHORT).show();
 
-        // Save to local database first
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(() -> {
             try {
+                // ✅ Save to local database
                 long recordId = db.locationTrackDao().insert(track);
                 track.setId((int) recordId);
 
-                Log.d(TAG, "Photo record saved locally with ID: " + recordId);
-                Log.d(TAG, "Photo filename: " + photoFileName);
+                Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId);
+                Log.d(TAG, "✓ Local photo path: " + capturedImageFile.getAbsolutePath());
 
-                // Upload to server
-                ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
-                    @Override
-                    public void onSuccess(String photoPath) {
-                        runOnUiThread(() -> {
-                            Toast.makeText(CameraActivity.this,
-                                    "✓ Photo uploaded successfully!", Toast.LENGTH_SHORT).show();
-                            finish();
-                        });
-                    }
+                // ✅ Try to upload immediately if online
+                if (isNetworkAvailable()) {
+                    Log.d(TAG, "📡 Network available, attempting immediate upload");
 
-                    @Override
-                    public void onFailure(String error) {
-                        runOnUiThread(() -> {
-                            Toast.makeText(CameraActivity.this,
-                                    "✓ Saved locally. Will sync later: " + error,
-                                    Toast.LENGTH_LONG).show();
-                            finish();
-                        });
-                    }
-                });
+                    ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
+                        @Override
+                        public void onSuccess(String photoPath) {
+                            // Mark photo as synced in database
+                            executorService.execute(() -> {
+                                db.locationTrackDao().markPhotoAsSynced(track.getId());
+
+                                // Delete local file after successful upload
+                                if (capturedImageFile.delete()) {
+                                    Log.d(TAG, "✓ Photo uploaded and local copy deleted");
+                                }
+                            });
+
+                            runOnUiThread(() -> {
+                                Toast.makeText(CameraActivity.this,
+                                        "✓ Photo uploaded successfully!", Toast.LENGTH_SHORT).show();
+                                finish();
+                            });
+                        }
+
+                        @Override
+                        public void onFailure(String error) {
+                            Log.w(TAG, "⚠ Immediate upload failed: " + error);
+                            runOnUiThread(() -> {
+                                Toast.makeText(CameraActivity.this,
+                                        "✓ Saved locally. Will sync when online.", Toast.LENGTH_LONG).show();
+                                finish();
+                            });
+                        }
+                    });
+                } else {
+                    // ✅ No network - photo will be synced later by service
+                    Log.d(TAG, "📴 No network. Photo will sync later.");
+                    runOnUiThread(() -> {
+                        Toast.makeText(CameraActivity.this,
+                                "✓ Saved locally. Will sync when online.", Toast.LENGTH_LONG).show();
+                        finish();
+                    });
+                }
 
             } catch (Exception e) {
-                Log.e(TAG, "Error saving photo record: " + e.getMessage());
+                Log.e(TAG, "✗ Error saving photo record: " + e.getMessage());
                 runOnUiThread(() -> {
                     Toast.makeText(CameraActivity.this,
-                            "Failed to save record", Toast.LENGTH_SHORT).show();
+                            "Failed to save photo", Toast.LENGTH_SHORT).show();
                 });
             }
         });
+    }
+
+    private boolean isNetworkAvailable() {
+        android.net.ConnectivityManager cm =
+                (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        android.net.NetworkInfo networkInfo = cm.getActiveNetworkInfo();
+        return networkInfo != null && networkInfo.isConnected();
     }
 
     private int getBatteryLevel() {
