@@ -296,6 +296,7 @@ public class LocationTrackingService extends Service {
 
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
         long mobileTime = deviceInfo.getMobileTime();
+        int nss = deviceInfo.getNetworkSignalStrength();
 
         float speedToSave = isStationary ? 0 : (location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0);
 
@@ -321,7 +322,8 @@ public class LocationTrackingService extends Service {
                 deviceInfo.getModelOS(),
                 deviceInfo.getApkName(),
                 deviceInfo.getImsiNo(),
-                mobileTime
+                mobileTime,
+                nss
         );
 
         executorService.execute(() -> {
