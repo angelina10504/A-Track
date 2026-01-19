@@ -1,7 +1,7 @@
 package com.example.a_track.adapter;
 
 
-
+import android.graphics.Color;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -35,13 +35,28 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
         String dateTime = dateFormat.format(new Date(track.getDateTime()));
         holder.tvTrackDateTime.setText(dateTime);
 
-        String location = String.format(Locale.getDefault(), "Lat: %.3f, Lng: %.3f",
+        String location = String.format(Locale.getDefault(), "Lat: %.4f, Lng: %.4f",
                 track.getLatitude(), track.getLongitude());
         holder.tvTrackLocation.setText(location);
 
         String speed = String.format(Locale.getDefault(), "%.2f km/h",
-                track.getSpeed()*3.6f);
+                track.getSpeed());
         holder.tvTrackSpeed.setText(speed);
+
+        boolean locationSynced = track.getSynced() == 1;
+        boolean hasPhoto = track.getPhotoPath() != null && !track.getPhotoPath().isEmpty();
+        boolean photoSynced = track.getPhotoSynced() == 1;
+
+        if (locationSynced && (!hasPhoto || photoSynced)) {
+            // Fully synced (location synced + no photo OR photo also synced) - GREEN
+            holder.itemView.setBackgroundColor(Color.parseColor("#C8E6C9")); // Light green
+        } else if (locationSynced && hasPhoto && !photoSynced) {
+            // Location synced but photo pending - YELLOW
+            holder.itemView.setBackgroundColor(Color.parseColor("#FFF9C4")); // Light yellow
+        } else {
+            // Not synced - WHITE
+            holder.itemView.setBackgroundColor(Color.WHITE);
+        }
 
     }
 
