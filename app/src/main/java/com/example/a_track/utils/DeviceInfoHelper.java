@@ -11,6 +11,21 @@ import android.os.Build;
 import android.provider.Settings;
 import android.telephony.TelephonyManager;
 import androidx.core.app.ActivityCompat;
+import android.telephony.CellInfo;
+import android.telephony.CellInfoGsm;
+import android.telephony.CellInfoLte;
+import android.telephony.CellInfoWcdma;
+import android.telephony.CellSignalStrengthGsm;
+import android.telephony.CellSignalStrengthLte;
+import android.telephony.CellSignalStrengthWcdma;
+import android.telephony.SignalStrength;
+import android.util.Log;
+import java.util.List;
+
+// For Android 10+ (5G)
+import android.os.Build;
+import android.telephony.CellInfoNr;
+import android.telephony.CellSignalStrengthNr;
 
 public class DeviceInfoHelper {
 
@@ -152,5 +167,73 @@ public class DeviceInfoHelper {
     }
     public long getMobileTime() {
         return System.currentTimeMillis();
+    }
+
+    // Get Network Signal Strength (0-11 based on SINR)
+    public int getNetworkSignalStrength() {
+        try {
+            TelephonyManager telephonyManager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+            if (telephonyManager != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    // Android 9+ (API 28+)
+                    SignalStrength signalStrength = telephonyManager.getSignalStrength();
+                    if (signalStrength != null) {
+                        int level = signalStrength.getLevel(); // 0-4
+                        // Map 0-4 to 0-11 scale
+                        // 0 = 0-2, 1 = 3-5, 2 = 6-8, 3 = 9-10, 4 = 11
+                        if (level == 0) return 1;
+                        if (level == 1) return 4;
+                        if (level == 2) return 7;
+                        if (level == 3) return 9;
+                        if (level == 4) return 11;
+                    }
+                } else {
+                    // Below Android 9 - use cell info
+                    List<CellInfo> cellInfoList = telephonyManager.getAllCellInfo();
+                    if (cellInfoList != null && !cellInfoList.isEmpty()) {
+                        for (CellInfo cellInfo : cellInfoList) {
+                            if (cellInfo.isRegistered()) {
+                                int dbm = getCellSignalStrength(cellInfo);
+                                // Convert dBm to 0-11 scale (SINR approximation)
+                                return mapDbmToScale(dbm);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (SecurityException e) {
+            Log.e("DeviceInfoHelper", "Permission denied for signal strength");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return 0; // No signal or error
+    }
+
+    // Helper: Get signal strength from CellInfo
+    private int getCellSignalStrength(CellInfo cellInfo) {
+        if (cellInfo instanceof CellInfoLte) {
+            CellSignalStrengthLte lte = ((CellInfoLte) cellInfo).getCellSignalStrength();
+            return lte.getDbm();
+        } else if (cellInfo instanceof CellInfoGsm) {
+            CellSignalStrengthGsm gsm = ((CellInfoGsm) cellInfo).getCellSignalStrength();
+            return gsm.getDbm();
+        } else if (cellInfo instanceof CellInfoWcdma) {
+            CellSignalStrengthWcdma wcdma = ((CellInfoWcdma) cellInfo).getCellSignalStrength();
+            return wcdma.getDbm();
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && cellInfo instanceof CellInfoNr) {
+            CellSignalStrengthNr nr = (CellSignalStrengthNr) ((CellInfoNr) cellInfo).getCellSignalStrength();
+            return nr.getDbm();
+        }
+        return -120; // Very weak signal
+    }
+
+    // Helper: Map dBm to 0-11 scale (approximating SINR)
+    private int mapDbmToScale(int dbm) {
+        if (dbm >= -70) return 11;  // Excellent
+        if (dbm >= -80) return 9;   // Good
+        if (dbm >= -90) return 7;   // Mid
+        if (dbm >= -100) return 4;  // Acceptable
+        if (dbm >= -110) return 2;  // Weak
+        return 0;                    // Very weak/No signal
     }
 }

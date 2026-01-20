@@ -256,7 +256,7 @@ public class LocationTrackingService extends Service {
         boolean isStationary = false;
         if (lastSavedLocation != null) {
             float distance = location.distanceTo(lastSavedLocation);
-            float speed = location.hasSpeed() ? location.getSpeed() : 0;
+            float speed = location.hasSpeed() ? (location.getSpeed()) : 0;
 
             // Check if stationary (small movement + low speed)
             if (distance < STATIONARY_THRESHOLD && speed < MIN_SPEED) {
@@ -296,12 +296,15 @@ public class LocationTrackingService extends Service {
 
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
         long mobileTime = deviceInfo.getMobileTime();
+        int nss = deviceInfo.getNetworkSignalStrength();
+
+        float speedToSave = isStationary ? 0 : (location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0);
 
         LocationTrack track = new LocationTrack(
                 mobileNumber,
                 location.getLatitude(),
                 location.getLongitude(),
-                location.getSpeed() * 3.6f,
+                speedToSave,
                 location.getBearing(),
                 currentTime,
                 sessionId,
@@ -319,7 +322,8 @@ public class LocationTrackingService extends Service {
                 deviceInfo.getModelOS(),
                 deviceInfo.getApkName(),
                 deviceInfo.getImsiNo(),
-                mobileTime
+                mobileTime,
+                nss
         );
 
         executorService.execute(() -> {

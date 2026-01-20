@@ -327,6 +327,7 @@ public class CameraActivity extends AppCompatActivity {
         int battery = getBatteryLevel();
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
         long mobileTime = deviceInfo.getMobileTime();
+        int nss = deviceInfo.getNetworkSignalStrength();
 
         // ✅ Create record with local photo path
         LocationTrack track = new LocationTrack(
@@ -351,7 +352,8 @@ public class CameraActivity extends AppCompatActivity {
                 deviceInfo.getModelOS(),
                 deviceInfo.getApkName(),
                 deviceInfo.getImsiNo(),
-                mobileTime
+                mobileTime,
+                nss
         );
 
         // ✅ Save locally first (always works)

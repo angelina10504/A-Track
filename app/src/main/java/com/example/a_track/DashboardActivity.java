@@ -311,12 +311,11 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     }
 
     private void updateLocationUI(Location location) {
-        tvLatitude.setText(String.format(Locale.getDefault(), "Lat: %.2f", location.getLatitude()));
-        tvLongitude.setText(String.format(Locale.getDefault(), "Long: %.2f", location.getLongitude()));
-        float speedKmh = location.getSpeed() * 3.6f;
-        tvSpeed.setText(String.format(Locale.getDefault(), "Speed: %.2f km/h", speedKmh));
+        tvLatitude.setText(String.format(Locale.getDefault(), "Lat: %.6f", location.getLatitude()));
+        tvLongitude.setText(String.format(Locale.getDefault(), "Lng: %.6f", location.getLongitude()));
+        tvDateTime.setText( dateFormat.format(new Date()));
+        tvSpeed.setText(String.format(Locale.getDefault(), "%.2f km/h", location.getSpeed()*3.6f));
         tvAngle.setText(String.format(Locale.getDefault(), "Angle: %.0f°", location.getBearing()));
-        tvDateTime.setText("DtTime: " + dateFormat.format(new Date()));
 
         // Update map
         updateMapLocation(location);
@@ -452,7 +451,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         Intent intent = new Intent(this, CameraActivity.class);
         intent.putExtra("latitude", location.getLatitude());
         intent.putExtra("longitude", location.getLongitude());
-        intent.putExtra("speed", location.getSpeed());
+        intent.putExtra("speed", location.getSpeed()*3.6f);
         intent.putExtra("angle", location.getBearing());
         intent.putExtra("dateTime", location.getTime());
         startActivity(intent);
