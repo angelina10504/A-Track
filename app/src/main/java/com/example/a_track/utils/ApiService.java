@@ -74,6 +74,7 @@ public class ApiService {
                     JSONObject o = new JSONObject();
                     o.put("mobileNumber", t.getMobileNumber());
                     o.put("nss", t.getNss());
+                    o.put("RecNo",t.getRecNo());
                     o.put("latitude", t.getLatitude());
                     o.put("longitude", t.getLongitude());
                     o.put("speed", t.getSpeed());
@@ -189,6 +190,7 @@ public class ApiService {
                 // Add required form fields
                 writeFormField(out, boundary, "mobileNumber", track.getMobileNumber());
                 writeFormField(out, boundary, "nss", String.valueOf(track.getNss()));
+                writeFormField(out, boundary, "recNo", String.valueOf(track.getRecNo()));
                 writeFormField(out, boundary, "dateTime", String.valueOf(track.getDateTime()));
                 writeFormField(out, boundary, "mobileTime", String.valueOf(track.getMobileTime()));
                 writeFormField(out, boundary, "latitude", String.valueOf(track.getLatitude()));

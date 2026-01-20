@@ -325,64 +325,78 @@ public class CameraActivity extends AppCompatActivity {
         }
 
         int battery = getBatteryLevel();
+
+        // Get device info
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
         long mobileTime = deviceInfo.getMobileTime();
         int nss = deviceInfo.getNetworkSignalStrength();
 
-        // ✅ Create record with local photo path
-        LocationTrack track = new LocationTrack(
-                mobileNumber,
-                latitude,
-                longitude,
-                speed,
-                angle,
-                dateTime,
-                sessionId,
-                battery,
-                capturedImageFile.getAbsolutePath(), // ✅ Local path stored
-                remarks.isEmpty() ? null : remarks,
-                deviceInfo.getGpsState(),
-                deviceInfo.getInternetState(),
-                deviceInfo.getFlightState(),
-                deviceInfo.getRoamingState(),
-                deviceInfo.getIsNetThere(),
-                deviceInfo.getIsNwThere(),
-                deviceInfo.getIsMoving(speed),
-                deviceInfo.getModelNo(),
-                deviceInfo.getModelOS(),
-                deviceInfo.getApkName(),
-                deviceInfo.getImsiNo(),
-                mobileTime,
-                nss
-        );
-
-        // ✅ Save locally first (always works)
         Toast.makeText(this, "Saving photo...", Toast.LENGTH_SHORT).show();
 
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(() -> {
             try {
-                // ✅ Save to local database
+                // Get next RecNo on background thread
+                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int nextRecNo = lastRecNo + 1;
+
+                // Create record with local photo path
+                LocationTrack track = new LocationTrack(
+                        mobileNumber,
+                        latitude,
+                        longitude,
+                        speed,
+                        angle,
+                        dateTime,
+                        sessionId,
+                        battery,
+                        capturedImageFile.getAbsolutePath(), // Local path stored
+                        remarks.isEmpty() ? null : remarks,
+                        deviceInfo.getGpsState(),
+                        deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(),
+                        deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(),
+                        deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(speed),
+                        deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(),
+                        deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(),
+                        mobileTime,
+                        nss,
+                        nextRecNo
+                );
+
+                // Save to local database
                 long recordId = db.locationTrackDao().insert(track);
                 track.setId((int) recordId);
 
                 Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId);
                 Log.d(TAG, "✓ Local photo path: " + capturedImageFile.getAbsolutePath());
 
-                // ✅ Try to upload immediately if online
+                // Try to upload immediately if online
                 if (isNetworkAvailable()) {
                     Log.d(TAG, "📡 Network available, attempting immediate upload");
 
                     ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
                         @Override
                         public void onSuccess(String photoPath) {
-                            // Mark photo as synced in database
+                            // Mark as synced
                             executorService.execute(() -> {
-                                db.locationTrackDao().markPhotoAsSynced(track.getId());
+                                try {
+                                    java.util.List<Integer> ids = new java.util.ArrayList<>();
+                                    ids.add(track.getId());
+                                    db.locationTrackDao().markAsSynced(ids);
 
-                                // Delete local file after successful upload
-                                if (capturedImageFile.delete()) {
-                                    Log.d(TAG, "✓ Photo uploaded and local copy deleted");
+                                    // Delete local file after successful upload
+                                    if (capturedImageFile.delete()) {
+                                        Log.d(TAG, "✓ Photo uploaded and local copy deleted");
+                                    } else {
+                                        Log.w(TAG, "⚠ Photo uploaded but couldn't delete local file");
+                                    }
+                                } catch (Exception e) {
+                                    Log.e(TAG, "Error marking as synced: " + e.getMessage());
                                 }
                             });
 
@@ -404,7 +418,7 @@ public class CameraActivity extends AppCompatActivity {
                         }
                     });
                 } else {
-                    // ✅ No network - photo will be synced later by service
+                    // No network - photo will be synced later by service
                     Log.d(TAG, "📴 No network. Photo will sync later.");
                     runOnUiThread(() -> {
                         Toast.makeText(CameraActivity.this,
