@@ -291,47 +291,57 @@ public class LocationTrackingService extends Service {
             Log.d(TAG, "🚗 Moving - using GPS coordinates");
         }
 
+        // Get data that's safe on main thread
         long currentTime = location.getTime();
         int battery = getBatteryLevel();
+        float speedToSave = isStationary ? 0 : (location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0);
 
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
         long mobileTime = deviceInfo.getMobileTime();
         int nss = deviceInfo.getNetworkSignalStrength();
 
-        float speedToSave = isStationary ? 0 : (location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0);
-
-        LocationTrack track = new LocationTrack(
-                mobileNumber,
-                location.getLatitude(),
-                location.getLongitude(),
-                speedToSave,
-                location.getBearing(),
-                currentTime,
-                sessionId,
-                battery,
-                null,
-                null,
-                deviceInfo.getGpsState(),
-                deviceInfo.getInternetState(),
-                deviceInfo.getFlightState(),
-                deviceInfo.getRoamingState(),
-                deviceInfo.getIsNetThere(),
-                deviceInfo.getIsNwThere(),
-                deviceInfo.getIsMoving(location.getSpeed()),
-                deviceInfo.getModelNo(),
-                deviceInfo.getModelOS(),
-                deviceInfo.getApkName(),
-                deviceInfo.getImsiNo(),
-                mobileTime,
-                nss
-        );
-
+        // Move database operations to background thread
         executorService.execute(() -> {
             try {
+                // Get next RecNo on background thread
+                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int nextRecNo = lastRecNo + 1;
+
+                LocationTrack track = new LocationTrack(
+                        mobileNumber,
+                        location.getLatitude(),
+                        location.getLongitude(),
+                        speedToSave,
+                        location.getBearing(),
+                        currentTime,
+                        sessionId,
+                        battery,
+                        null,
+                        null,
+                        deviceInfo.getGpsState(),
+                        deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(),
+                        deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(),
+                        deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(location.getSpeed()),
+                        deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(),
+                        deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(),
+                        mobileTime,
+                        nss,
+                        nextRecNo
+                );
+
                 db.locationTrackDao().insert(track);
                 lastSavedLocation = new Location(locationToSave);
 
-                Log.d(TAG, "✓ Location saved with device info");
+                Log.d(TAG, "✓ Location saved: RecNo=" + nextRecNo +
+                        ", Lat=" + location.getLatitude() +
+                        ", Lng=" + location.getLongitude() +
+                        ", Speed=" + speedToSave + " km/h" +
+                        ", Battery=" + battery + "%");
             } catch (Exception e) {
                 Log.e(TAG, "Error saving location: " + e.getMessage());
             }

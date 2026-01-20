@@ -97,4 +97,7 @@ public interface LocationTrackDao {
             long endTime
     );
 
+    @Query("SELECT MAX(RecNo) FROM location_tracks WHERE mobileNumber = :mobile")
+    int getLastRecNo(String mobile);
+
 }
