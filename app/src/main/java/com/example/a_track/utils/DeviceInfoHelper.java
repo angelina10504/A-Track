@@ -19,6 +19,7 @@ import android.telephony.CellSignalStrengthGsm;
 import android.telephony.CellSignalStrengthLte;
 import android.telephony.CellSignalStrengthWcdma;
 import android.telephony.SignalStrength;
+import android.telephony.ServiceState;
 import android.util.Log;
 import java.util.List;
 
@@ -96,12 +97,62 @@ public class DeviceInfoHelper {
 
     // Check if network location provider is available
     public String getIsNwThere() {
-        LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-        if (locationManager != null) {
-            boolean isNetworkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
-            return isNetworkEnabled ? "1" : "0";
+        try {
+            TelephonyManager telephonyManager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+
+            if (telephonyManager != null) {
+                // ✅ FIXED: Check permission first before accessing ServiceState
+                boolean hasPermission = true;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    hasPermission = context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+                            == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                }
+
+                // For Android 10+ (API 29+), ServiceState requires READ_PHONE_STATE permission
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && hasPermission) {
+                    try {
+                        ServiceState serviceState = telephonyManager.getServiceState();
+
+                        if (serviceState != null) {
+                            int state = serviceState.getState();
+
+                            Log.d("DeviceInfoHelper", "ServiceState: " + state +
+                                    " (0=IN_SERVICE, 1=OUT_OF_SERVICE, 2=EMERGENCY_ONLY, 3=POWER_OFF)");
+
+                            return (state == ServiceState.STATE_IN_SERVICE) ? "1" : "0";
+                        }
+
+                    } catch (Exception e) {
+                        Log.w("DeviceInfoHelper", "ServiceState failed: " + e.getMessage());
+                    }
+                }
+
+                // ✅ FALLBACK: Use simpler method that works without permission
+                // Check if SIM card is present and ready
+                int simState = telephonyManager.getSimState();
+
+                // SIM_STATE_READY means SIM is present and working
+                if (simState == TelephonyManager.SIM_STATE_READY) {
+                    // Check network type
+                    int networkType = telephonyManager.getNetworkType();
+
+                    Log.d("DeviceInfoHelper", "SIM Ready, Network Type: " + networkType +
+                            " (0=UNKNOWN, 1=GPRS, 2=EDGE, 3=UMTS, 13=LTE, 20=NR/5G)");
+
+                    // If network type is not UNKNOWN, there's a cellular connection
+                    return (networkType != TelephonyManager.NETWORK_TYPE_UNKNOWN) ? "1" : "0";
+                }
+
+                Log.d("DeviceInfoHelper", "SIM State: " + simState + " (Not ready)");
+                return "0";
+            }
+
+            return "0";
+
+        } catch (Exception e) {
+            Log.e("DeviceInfoHelper", "Error checking cellular network: " + e.getMessage());
+            return "0";
         }
-        return "0";
     }
 
     // Get Android OS version

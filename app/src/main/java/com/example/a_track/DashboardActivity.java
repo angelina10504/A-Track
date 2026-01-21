@@ -19,6 +19,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -79,7 +80,8 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 requestBackgroundLocation();
                             } else {
-                                startLocationService();
+                                // ✅ After location permission, request phone state
+                                requestPhoneStatePermission();
                             }
                         } else {
                             Toast.makeText(this, "Location permissions are required!", Toast.LENGTH_LONG).show();
@@ -91,11 +93,28 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             registerForActivityResult(new ActivityResultContracts.RequestPermission(),
                     isGranted -> {
                         if (isGranted) {
-                            startLocationService();
+                            // ✅ After background location, request phone state
+                            requestPhoneStatePermission();
                         } else {
                             Toast.makeText(this, "Background location is recommended", Toast.LENGTH_LONG).show();
-                            startLocationService();
+                            // ✅ Still request phone state even if background denied
+                            requestPhoneStatePermission();
                         }
+                    }
+            );
+
+    // ✅ NEW: Phone state permission launcher
+    private ActivityResultLauncher<String> phoneStatePermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(),
+                    isGranted -> {
+                        if (isGranted) {
+                            Log.d("DashboardActivity", "✓ Phone state permission granted");
+                            Toast.makeText(this, "Cellular detection enabled", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Log.d("DashboardActivity", "Phone state permission denied - using fallback");
+                        }
+                        // Start service regardless of permission (fallback will work)
+                        startLocationService();
                     }
             );
 
@@ -267,7 +286,8 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
                         != PackageManager.PERMISSION_GRANTED) {
             requestBackgroundLocation();
         } else {
-            startLocationService();
+            // ✅ Check phone state permission after other permissions
+            requestPhoneStatePermission();
         }
     }
 
@@ -279,8 +299,36 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
                     .setPositiveButton("Allow", (dialog, which) -> {
                         backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
                     })
-                    .setNegativeButton("Skip", (dialog, which) -> startLocationService())
+                    .setNegativeButton("Skip", (dialog, which) -> requestPhoneStatePermission())
                     .show();
+        }
+    }
+
+    // ✅ NEW: Request phone state permission
+    private void requestPhoneStatePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE)
+                    != PackageManager.PERMISSION_GRANTED) {
+
+                // Show explanation dialog
+                new AlertDialog.Builder(this)
+                        .setTitle("Cellular Detection Permission")
+                        .setMessage("A-Track needs this permission to detect cellular network availability for better tracking accuracy.")
+                        .setPositiveButton("Allow", (dialog, which) -> {
+                            phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE);
+                        })
+                        .setNegativeButton("Skip", (dialog, which) -> {
+                            Log.d("DashboardActivity", "Phone state permission skipped - using fallback");
+                            startLocationService();
+                        })
+                        .show();
+            } else {
+                // Permission already granted
+                startLocationService();
+            }
+        } else {
+            // Android 5.x or lower - permission not needed
+            startLocationService();
         }
     }
 
@@ -447,6 +495,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             executorService.shutdown();
         }
     }
+
     private void openCameraActivity(Location location) {
         Intent intent = new Intent(this, CameraActivity.class);
         intent.putExtra("latitude", location.getLatitude());
