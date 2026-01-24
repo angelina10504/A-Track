@@ -42,6 +42,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class LocationTrackingService extends Service {
 
@@ -353,48 +355,104 @@ public class LocationTrackingService extends Service {
         if (mobile == null) return;
 
         executorService.execute(() -> {
-            // ✅ Step 1: Sync location data first (without photos)
+            // ✅ Step 1: Get all unsynced location records
             List<LocationTrack> unsyncedTracks = db.locationTrackDao().getUnsyncedTracks(mobile);
 
             if (!unsyncedTracks.isEmpty()) {
-                Log.d(TAG, "📍 Syncing " + unsyncedTracks.size() + " location records");
+                int totalRecords = unsyncedTracks.size();
 
-                ApiService.syncLocations(unsyncedTracks, new ApiService.SyncCallback() {
-                    @Override
-                    public void onSuccess(int syncedCount, List<Integer> syncedIds) {
-                        Log.d(TAG, "✓ Successfully synced " + syncedCount + " locations");
+                // ✅ If 20 or fewer records, sync all at once (no batching)
+                if (totalRecords <= 20) {
+                    Log.d(TAG, "📍 Syncing " + totalRecords + " records (single batch)");
+                    syncBatchBlocking(unsyncedTracks);
+                }
+                // ✅ If more than 20 records, use batch syncing
+                else {
+                    int BATCH_SIZE = 20; // Sync 20 records at a time
+                    int totalBatches = (totalRecords + BATCH_SIZE - 1) / BATCH_SIZE;
 
-                        executorService.execute(() -> {
-                            // Mark location data as synced
-                            if (!syncedIds.isEmpty()) {
-                                db.locationTrackDao().markAsSynced(syncedIds);
-                                Log.d(TAG, "✓ Marked " + syncedIds.size() + " location records as synced");
+                    Log.d(TAG, "📍 Starting batch sync: " + totalRecords + " records in " +
+                            totalBatches + " batches");
+
+                    // Sync in batches
+                    for (int batchNum = 0; batchNum < totalBatches; batchNum++) {
+                        int start = batchNum * BATCH_SIZE;
+                        int end = Math.min(start + BATCH_SIZE, totalRecords);
+                        List<LocationTrack> batch = unsyncedTracks.subList(start, end);
+
+                        Log.d(TAG, "📤 Syncing batch " + (batchNum + 1) + "/" + totalBatches +
+                                ": " + batch.size() + " records");
+
+                        // Sync this batch (blocking)
+                        boolean success = syncBatchBlocking(batch);
+
+                        if (!success) {
+                            Log.w(TAG, "⚠ Batch " + (batchNum + 1) + " failed, continuing to next batch");
+                        }
+
+                        // Small delay between batches to reduce server load
+                        if (batchNum < totalBatches - 1) { // Don't delay after last batch
+                            try {
+                                Thread.sleep(1000); // 1 second between batches
+                            } catch (InterruptedException e) {
+                                Log.e(TAG, "Batch delay interrupted: " + e.getMessage());
                             }
-
-                            // ✅ Step 2: Now sync photos
-                            syncPendingPhotos();
-
-                            // ✅ Step 3: Clean up old records
-                            cleanupOldRecords();
-                        });
+                        }
                     }
 
-                    @Override
-                    public void onFailure(String error) {
-                        Log.e(TAG, "✗ Location sync failed: " + error);
-                        // Still try to sync photos even if location sync fails
-                        syncPendingPhotos();
-                    }
-                });
+                    Log.d(TAG, "✓ Batch sync completed for all location records");
+                }
+
             } else {
                 Log.d(TAG, "No location data to sync, checking for photos...");
-                // No location data to sync, but check for pending photos
-                syncPendingPhotos();
-                cleanupOldRecords();
             }
+
+            // ✅ Step 2: Sync photos (after all location batches)
+            syncPendingPhotos();
+
+            // ✅ Step 3: Clean up old records
+            cleanupOldRecords();
         });
     }
 
+    private boolean syncBatchBlocking(List<LocationTrack> batch) {
+        final CountDownLatch latch = new CountDownLatch(1);
+        final boolean[] success = {false};
+
+        ApiService.syncLocations(batch, new ApiService.SyncCallback() {
+            @Override
+            public void onSuccess(int syncedCount, List<Integer> syncedIds) {
+                Log.d(TAG, "✓ Batch synced: " + syncedCount + " records");
+
+                executorService.execute(() -> {
+                    // Mark this batch as synced
+                    if (!syncedIds.isEmpty()) {
+                        db.locationTrackDao().markAsSynced(syncedIds);
+                        Log.d(TAG, "✓ Marked " + syncedIds.size() + " records as synced");
+                    }
+                    success[0] = true;
+                    latch.countDown();
+                });
+            }
+
+            @Override
+            public void onFailure(String error) {
+                Log.e(TAG, "✗ Batch sync failed: " + error);
+                success[0] = false;
+                latch.countDown();
+            }
+        });
+
+        // Wait for this batch to complete before returning
+        try {
+            latch.await(30, TimeUnit.SECONDS); // Max 30 seconds per batch
+        } catch (InterruptedException e) {
+            Log.e(TAG, "Batch sync interrupted: " + e.getMessage());
+            return false;
+        }
+
+        return success[0];
+    }
     private void syncPendingPhotos() {
         String mobile = sessionManager.getMobileNumber();
         if (mobile == null) return;
