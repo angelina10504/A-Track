@@ -317,29 +317,10 @@ public class CameraActivity extends AppCompatActivity {
         options.inSampleSize = 2; // Scale down by 2x for preview
         Bitmap bitmap = BitmapFactory.decodeFile(photoPath, options);
 
-        // Check EXIF orientation
-        ExifInterface exif = new ExifInterface(photoPath);
-        int orientation = exif.getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_NORMAL
-        );
+        // ✅ No rotation needed! ImageCompressor already handled orientation
+        // The compressed file is already rotated correctly
 
-        // Rotate if needed
-        Matrix matrix = new Matrix();
-        switch (orientation) {
-            case ExifInterface.ORIENTATION_ROTATE_90:
-                matrix.postRotate(90);
-                break;
-            case ExifInterface.ORIENTATION_ROTATE_180:
-                matrix.postRotate(180);
-                break;
-            case ExifInterface.ORIENTATION_ROTATE_270:
-                matrix.postRotate(270);
-                break;
-        }
-
-        return Bitmap.createBitmap(bitmap, 0, 0,
-                bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        return bitmap;
     }
 
     private void savePhotoRecord(String remarks) {
@@ -363,16 +344,42 @@ public class CameraActivity extends AppCompatActivity {
         long mobileTime = deviceInfo.getMobileTime();
         int nss = deviceInfo.getNetworkSignalStrength();
 
-        Toast.makeText(this, "Saving photo...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Compressing and saving photo...", Toast.LENGTH_SHORT).show();
 
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(() -> {
             try {
+                // Step 1: Compress the captured image
+                File compressedFile = new File(getExternalFilesDir(null),
+                        "compressed_" + System.currentTimeMillis() + ".jpg");
+
+                boolean compressed = ImageCompressor.compressImage(capturedImageFile, compressedFile);
+
+                if (!compressed) {
+                    Log.e(TAG, "Image compression failed");
+                    runOnUiThread(() -> {
+                        Toast.makeText(CameraActivity.this,
+                                "Failed to compress image", Toast.LENGTH_SHORT).show();
+                    });
+                    return;
+                }
+
+                // Delete original uncompressed file
+                if (capturedImageFile.delete()) {
+                    Log.d(TAG, "✓ Original photo deleted after compression");
+                }
+
+                // Use compressed file from now on
+                File finalPhotoFile = compressedFile;
+
+                Log.d(TAG, "✓ Image compressed: " +
+                        ImageCompressor.getReadableFileSize(finalPhotoFile.length()));
+
                 // Get next RecNo on background thread
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
                 int nextRecNo = lastRecNo + 1;
 
-                // Create record with local photo path
+                // Create record with compressed photo path
                 LocationTrack track = new LocationTrack(
                         mobileNumber,
                         latitude,
@@ -382,7 +389,7 @@ public class CameraActivity extends AppCompatActivity {
                         dateTime,
                         sessionId,
                         battery,
-                        capturedImageFile.getAbsolutePath(), // Local path stored
+                        finalPhotoFile.getAbsolutePath(), // Compressed file path
                         remarks.isEmpty() ? null : remarks,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
@@ -405,13 +412,13 @@ public class CameraActivity extends AppCompatActivity {
                 track.setId((int) recordId);
 
                 Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId);
-                Log.d(TAG, "✓ Local photo path: " + capturedImageFile.getAbsolutePath());
+                Log.d(TAG, "✓ Compressed photo path: " + finalPhotoFile.getAbsolutePath());
 
                 // Try to upload immediately if online
                 if (isNetworkAvailable()) {
                     Log.d(TAG, "📡 Network available, attempting immediate upload");
 
-                    ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
+                    ApiService.uploadPhoto(track, finalPhotoFile, new ApiService.PhotoUploadCallback() {
                         @Override
                         public void onSuccess(String photoPath) {
                             // Mark as synced
@@ -420,9 +427,10 @@ public class CameraActivity extends AppCompatActivity {
                                     java.util.List<Integer> ids = new java.util.ArrayList<>();
                                     ids.add(track.getId());
                                     db.locationTrackDao().markAsSynced(ids);
+                                    db.locationTrackDao().markPhotoAsSynced(track.getId());
 
                                     // Delete local file after successful upload
-                                    if (capturedImageFile.delete()) {
+                                    if (finalPhotoFile.delete()) {
                                         Log.d(TAG, "✓ Photo uploaded and local copy deleted");
                                     } else {
                                         Log.w(TAG, "⚠ Photo uploaded but couldn't delete local file");
@@ -461,6 +469,7 @@ public class CameraActivity extends AppCompatActivity {
 
             } catch (Exception e) {
                 Log.e(TAG, "✗ Error saving photo record: " + e.getMessage());
+                e.printStackTrace();
                 runOnUiThread(() -> {
                     Toast.makeText(CameraActivity.this,
                             "Failed to save photo", Toast.LENGTH_SHORT).show();
