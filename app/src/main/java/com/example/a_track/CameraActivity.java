@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -49,6 +50,9 @@ public class CameraActivity extends AppCompatActivity {
 
     private static final String TAG = "CameraActivity";
     private static final int CAMERA_PERMISSION_CODE = 100;
+
+    private CameraSelector currentCameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+    private ImageButton btnSwitchCamera;
 
     private PreviewView previewView;
     private ImageView ivPhotoPreview;
@@ -100,6 +104,7 @@ public class CameraActivity extends AppCompatActivity {
         btnSend = findViewById(R.id.btnSend);
         btnRetake = findViewById(R.id.btnRetake);
         tvLocationInfo = findViewById(R.id.tvLocationInfo);
+        btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
     }
 
     private void getLocationDataFromIntent() {
@@ -122,6 +127,8 @@ public class CameraActivity extends AppCompatActivity {
                     etRemarks.getText().toString().trim() : "";
             savePhotoRecord(remarks);
         });
+
+        btnSwitchCamera.setOnClickListener(v -> switchCamera());
     }
 
     private boolean checkCameraPermission() {
@@ -180,7 +187,7 @@ public class CameraActivity extends AppCompatActivity {
         try {
             cameraProvider.unbindAll();
             Camera camera = cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageCapture);
+                    this, currentCameraSelector, preview, imageCapture);  // ✅ Use variable
 
             Log.d(TAG, "Camera started successfully");
         } catch (Exception e) {
@@ -252,6 +259,7 @@ public class CameraActivity extends AppCompatActivity {
             btnCapture.setVisibility(View.GONE);
             btnRetake.setVisibility(View.VISIBLE);
             btnSend.setVisibility(View.VISIBLE);
+            btnSwitchCamera.setVisibility(View.GONE);
 
         } catch (Exception e) {
             Log.e(TAG, "Error showing preview: " + e.getMessage());
@@ -274,6 +282,7 @@ public class CameraActivity extends AppCompatActivity {
         btnCapture.setVisibility(View.VISIBLE);
         btnRetake.setVisibility(View.GONE);
         btnSend.setVisibility(View.GONE);
+        btnSwitchCamera.setVisibility(View.VISIBLE);
 
         // Clear remarks
         etRemarks.setText("");
@@ -461,6 +470,24 @@ public class CameraActivity extends AppCompatActivity {
             Log.e(TAG, "Error getting battery level: " + e.getMessage());
         }
         return 0;
+    }
+
+    private void switchCamera() {
+        // Toggle between front and back camera
+        if (currentCameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
+            currentCameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+            Log.d(TAG, "Switched to front camera");
+            Toast.makeText(this, "Front Camera", Toast.LENGTH_SHORT).show();
+        } else {
+            currentCameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+            Log.d(TAG, "Switched to back camera");
+            Toast.makeText(this, "Back Camera", Toast.LENGTH_SHORT).show();
+        }
+
+        // Restart camera with new selector
+        if (cameraProvider != null) {
+            bindCameraUseCases(cameraProvider);
+        }
     }
 
     @Override
