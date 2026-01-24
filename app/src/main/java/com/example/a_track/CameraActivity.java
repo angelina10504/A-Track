@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -44,11 +45,15 @@ import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import com.example.a_track.utils.ImageCompressor;
 
 public class CameraActivity extends AppCompatActivity {
 
     private static final String TAG = "CameraActivity";
     private static final int CAMERA_PERMISSION_CODE = 100;
+
+    private CameraSelector currentCameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+    private ImageButton btnSwitchCamera;
 
     private PreviewView previewView;
     private ImageView ivPhotoPreview;
@@ -100,6 +105,7 @@ public class CameraActivity extends AppCompatActivity {
         btnSend = findViewById(R.id.btnSend);
         btnRetake = findViewById(R.id.btnRetake);
         tvLocationInfo = findViewById(R.id.tvLocationInfo);
+        btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
     }
 
     private void getLocationDataFromIntent() {
@@ -122,6 +128,8 @@ public class CameraActivity extends AppCompatActivity {
                     etRemarks.getText().toString().trim() : "";
             savePhotoRecord(remarks);
         });
+
+        btnSwitchCamera.setOnClickListener(v -> switchCamera());
     }
 
     private boolean checkCameraPermission() {
@@ -180,7 +188,7 @@ public class CameraActivity extends AppCompatActivity {
         try {
             cameraProvider.unbindAll();
             Camera camera = cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageCapture);
+                    this, currentCameraSelector, preview, imageCapture);  // ✅ Use variable
 
             Log.d(TAG, "Camera started successfully");
         } catch (Exception e) {
@@ -205,26 +213,48 @@ public class CameraActivity extends AppCompatActivity {
         if (!photoDir.exists()) {
             photoDir.mkdirs();
         }
-        File photoFile = new File(photoDir, fileName);
+        File tempPhotoFile = new File(photoDir, "temp_" + fileName);
+        final File finalPhotoFile = new File(photoDir, fileName);
 
         ImageCapture.OutputFileOptions outputOptions =
-                new ImageCapture.OutputFileOptions.Builder(photoFile).build();
+                new ImageCapture.OutputFileOptions.Builder(tempPhotoFile).build();
 
         imageCapture.takePicture(outputOptions, cameraExecutor,
                 new ImageCapture.OnImageSavedCallback() {
                     @Override
                     public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
-                        runOnUiThread(() -> {
-                            capturedImageFile = photoFile;
-                            Log.d(TAG, "Photo saved: " + photoFile.getAbsolutePath());
-                            showPhotoPreview(photoFile);
-                            Toast.makeText(CameraActivity.this,
-                                    "Photo captured!", Toast.LENGTH_SHORT).show();
+                        // ✅ Compress the image
+                        boolean compressed = ImageCompressor.compressImage(tempPhotoFile, finalPhotoFile);
 
-                            // Show Send button, hide Capture button
-                            btnCapture.setVisibility(View.GONE);
-                            btnSend.setVisibility(View.VISIBLE);
-                        });
+                        // Delete temp file
+                        if (tempPhotoFile.exists()) {
+                            tempPhotoFile.delete();
+                        }
+
+                        if (compressed) {
+                            runOnUiThread(() -> {
+                                capturedImageFile = finalPhotoFile;
+
+                                long sizeKB = finalPhotoFile.length() / 1024;
+                                Log.d(TAG, "✓ Photo compressed: " + sizeKB + " KB");
+                                Log.d(TAG, "✓ Photo saved: " + finalPhotoFile.getAbsolutePath());
+
+                                showPhotoPreview(finalPhotoFile);
+                                Toast.makeText(CameraActivity.this,
+                                        "Photo captured! ", Toast.LENGTH_SHORT).show();
+
+                                // Show Send button, hide Capture button
+                                btnCapture.setVisibility(View.GONE);
+                                btnSend.setVisibility(View.VISIBLE);
+                            });
+                        } else {
+                            runOnUiThread(() -> {
+                                Log.e(TAG, "✗ Image compression failed, using original");
+                                // Use original if compression fails
+                                capturedImageFile = tempPhotoFile;
+                                showPhotoPreview(tempPhotoFile);
+                            });
+                        }
                     }
 
                     @Override
@@ -252,6 +282,7 @@ public class CameraActivity extends AppCompatActivity {
             btnCapture.setVisibility(View.GONE);
             btnRetake.setVisibility(View.VISIBLE);
             btnSend.setVisibility(View.VISIBLE);
+            btnSwitchCamera.setVisibility(View.GONE);
 
         } catch (Exception e) {
             Log.e(TAG, "Error showing preview: " + e.getMessage());
@@ -274,6 +305,7 @@ public class CameraActivity extends AppCompatActivity {
         btnCapture.setVisibility(View.VISIBLE);
         btnRetake.setVisibility(View.GONE);
         btnSend.setVisibility(View.GONE);
+        btnSwitchCamera.setVisibility(View.VISIBLE);
 
         // Clear remarks
         etRemarks.setText("");
@@ -285,29 +317,10 @@ public class CameraActivity extends AppCompatActivity {
         options.inSampleSize = 2; // Scale down by 2x for preview
         Bitmap bitmap = BitmapFactory.decodeFile(photoPath, options);
 
-        // Check EXIF orientation
-        ExifInterface exif = new ExifInterface(photoPath);
-        int orientation = exif.getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_NORMAL
-        );
+        // ✅ No rotation needed! ImageCompressor already handled orientation
+        // The compressed file is already rotated correctly
 
-        // Rotate if needed
-        Matrix matrix = new Matrix();
-        switch (orientation) {
-            case ExifInterface.ORIENTATION_ROTATE_90:
-                matrix.postRotate(90);
-                break;
-            case ExifInterface.ORIENTATION_ROTATE_180:
-                matrix.postRotate(180);
-                break;
-            case ExifInterface.ORIENTATION_ROTATE_270:
-                matrix.postRotate(270);
-                break;
-        }
-
-        return Bitmap.createBitmap(bitmap, 0, 0,
-                bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        return bitmap;
     }
 
     private void savePhotoRecord(String remarks) {
@@ -331,16 +344,42 @@ public class CameraActivity extends AppCompatActivity {
         long mobileTime = deviceInfo.getMobileTime();
         int nss = deviceInfo.getNetworkSignalStrength();
 
-        Toast.makeText(this, "Saving photo...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Compressing and saving photo...", Toast.LENGTH_SHORT).show();
 
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(() -> {
             try {
+                // Step 1: Compress the captured image
+                File compressedFile = new File(getExternalFilesDir(null),
+                        "compressed_" + System.currentTimeMillis() + ".jpg");
+
+                boolean compressed = ImageCompressor.compressImage(capturedImageFile, compressedFile);
+
+                if (!compressed) {
+                    Log.e(TAG, "Image compression failed");
+                    runOnUiThread(() -> {
+                        Toast.makeText(CameraActivity.this,
+                                "Failed to compress image", Toast.LENGTH_SHORT).show();
+                    });
+                    return;
+                }
+
+                // Delete original uncompressed file
+                if (capturedImageFile.delete()) {
+                    Log.d(TAG, "✓ Original photo deleted after compression");
+                }
+
+                // Use compressed file from now on
+                File finalPhotoFile = compressedFile;
+
+                Log.d(TAG, "✓ Image compressed: " +
+                        ImageCompressor.getReadableFileSize(finalPhotoFile.length()));
+
                 // Get next RecNo on background thread
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
                 int nextRecNo = lastRecNo + 1;
 
-                // Create record with local photo path
+                // Create record with compressed photo path
                 LocationTrack track = new LocationTrack(
                         mobileNumber,
                         latitude,
@@ -350,7 +389,7 @@ public class CameraActivity extends AppCompatActivity {
                         dateTime,
                         sessionId,
                         battery,
-                        capturedImageFile.getAbsolutePath(), // Local path stored
+                        finalPhotoFile.getAbsolutePath(), // Compressed file path
                         remarks.isEmpty() ? null : remarks,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
@@ -373,13 +412,13 @@ public class CameraActivity extends AppCompatActivity {
                 track.setId((int) recordId);
 
                 Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId);
-                Log.d(TAG, "✓ Local photo path: " + capturedImageFile.getAbsolutePath());
+                Log.d(TAG, "✓ Compressed photo path: " + finalPhotoFile.getAbsolutePath());
 
                 // Try to upload immediately if online
                 if (isNetworkAvailable()) {
                     Log.d(TAG, "📡 Network available, attempting immediate upload");
 
-                    ApiService.uploadPhoto(track, capturedImageFile, new ApiService.PhotoUploadCallback() {
+                    ApiService.uploadPhoto(track, finalPhotoFile, new ApiService.PhotoUploadCallback() {
                         @Override
                         public void onSuccess(String photoPath) {
                             // Mark as synced
@@ -388,9 +427,10 @@ public class CameraActivity extends AppCompatActivity {
                                     java.util.List<Integer> ids = new java.util.ArrayList<>();
                                     ids.add(track.getId());
                                     db.locationTrackDao().markAsSynced(ids);
+                                    db.locationTrackDao().markPhotoAsSynced(track.getId());
 
                                     // Delete local file after successful upload
-                                    if (capturedImageFile.delete()) {
+                                    if (finalPhotoFile.delete()) {
                                         Log.d(TAG, "✓ Photo uploaded and local copy deleted");
                                     } else {
                                         Log.w(TAG, "⚠ Photo uploaded but couldn't delete local file");
@@ -429,6 +469,7 @@ public class CameraActivity extends AppCompatActivity {
 
             } catch (Exception e) {
                 Log.e(TAG, "✗ Error saving photo record: " + e.getMessage());
+                e.printStackTrace();
                 runOnUiThread(() -> {
                     Toast.makeText(CameraActivity.this,
                             "Failed to save photo", Toast.LENGTH_SHORT).show();
@@ -461,6 +502,24 @@ public class CameraActivity extends AppCompatActivity {
             Log.e(TAG, "Error getting battery level: " + e.getMessage());
         }
         return 0;
+    }
+
+    private void switchCamera() {
+        // Toggle between front and back camera
+        if (currentCameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
+            currentCameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+            Log.d(TAG, "Switched to front camera");
+            Toast.makeText(this, "Front Camera", Toast.LENGTH_SHORT).show();
+        } else {
+            currentCameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+            Log.d(TAG, "Switched to back camera");
+            Toast.makeText(this, "Back Camera", Toast.LENGTH_SHORT).show();
+        }
+
+        // Restart camera with new selector
+        if (cameraProvider != null) {
+            bindCameraUseCases(cameraProvider);
+        }
     }
 
     @Override
