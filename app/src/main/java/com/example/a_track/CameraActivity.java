@@ -45,6 +45,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import com.example.a_track.utils.ImageCompressor;
 
 public class CameraActivity extends AppCompatActivity {
 
@@ -212,26 +213,48 @@ public class CameraActivity extends AppCompatActivity {
         if (!photoDir.exists()) {
             photoDir.mkdirs();
         }
-        File photoFile = new File(photoDir, fileName);
+        File tempPhotoFile = new File(photoDir, "temp_" + fileName);
+        final File finalPhotoFile = new File(photoDir, fileName);
 
         ImageCapture.OutputFileOptions outputOptions =
-                new ImageCapture.OutputFileOptions.Builder(photoFile).build();
+                new ImageCapture.OutputFileOptions.Builder(tempPhotoFile).build();
 
         imageCapture.takePicture(outputOptions, cameraExecutor,
                 new ImageCapture.OnImageSavedCallback() {
                     @Override
                     public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
-                        runOnUiThread(() -> {
-                            capturedImageFile = photoFile;
-                            Log.d(TAG, "Photo saved: " + photoFile.getAbsolutePath());
-                            showPhotoPreview(photoFile);
-                            Toast.makeText(CameraActivity.this,
-                                    "Photo captured!", Toast.LENGTH_SHORT).show();
+                        // ✅ Compress the image
+                        boolean compressed = ImageCompressor.compressImage(tempPhotoFile, finalPhotoFile);
 
-                            // Show Send button, hide Capture button
-                            btnCapture.setVisibility(View.GONE);
-                            btnSend.setVisibility(View.VISIBLE);
-                        });
+                        // Delete temp file
+                        if (tempPhotoFile.exists()) {
+                            tempPhotoFile.delete();
+                        }
+
+                        if (compressed) {
+                            runOnUiThread(() -> {
+                                capturedImageFile = finalPhotoFile;
+
+                                long sizeKB = finalPhotoFile.length() / 1024;
+                                Log.d(TAG, "✓ Photo compressed: " + sizeKB + " KB");
+                                Log.d(TAG, "✓ Photo saved: " + finalPhotoFile.getAbsolutePath());
+
+                                showPhotoPreview(finalPhotoFile);
+                                Toast.makeText(CameraActivity.this,
+                                        "Photo captured! ", Toast.LENGTH_SHORT).show();
+
+                                // Show Send button, hide Capture button
+                                btnCapture.setVisibility(View.GONE);
+                                btnSend.setVisibility(View.VISIBLE);
+                            });
+                        } else {
+                            runOnUiThread(() -> {
+                                Log.e(TAG, "✗ Image compression failed, using original");
+                                // Use original if compression fails
+                                capturedImageFile = tempPhotoFile;
+                                showPhotoPreview(tempPhotoFile);
+                            });
+                        }
                     }
 
                     @Override
