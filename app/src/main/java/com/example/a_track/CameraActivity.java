@@ -73,6 +73,8 @@ public class CameraActivity extends AppCompatActivity {
     private float angle;
     private long dateTime;
 
+    private int datatype;
+
     private AppDatabase db;
     private SessionManager sessionManager;
 
@@ -404,7 +406,8 @@ public class CameraActivity extends AppCompatActivity {
                         deviceInfo.getImsiNo(),
                         mobileTime,
                         nss,
-                        nextRecNo
+                        nextRecNo,
+                        datatype
                 );
 
                 // Save to local database

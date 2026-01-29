@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.location.Location;
 import android.location.LocationManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
@@ -34,6 +35,36 @@ public class DeviceInfoHelper {
 
     public DeviceInfoHelper(Context context) {
         this.context = context;
+    }
+
+    // ✅ NEW: Check if location is from mock provider
+    // ✅ CORRECTED: Mock location detection
+    public boolean isMockLocation(Location location) {
+        if (location == null) {
+            return false;
+        }
+
+        try {
+            // Android 12+ (API 31+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (location.isMock()) {
+                    Log.w("DeviceInfoHelper", "⚠️ Mock location detected via isMock()");
+                    return true;
+                }
+            }
+            // Android 4.3+ (API 18+)
+            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                if (location.isFromMockProvider()) {
+                    Log.w("DeviceInfoHelper", "⚠️ Mock location detected via isFromMockProvider()");
+                    return true;
+                }
+            }
+
+        } catch (Exception e) {
+            Log.e("DeviceInfoHelper", "Error checking mock location: " + e.getMessage());
+        }
+
+        return false;
     }
 
     // Check if GPS is enabled

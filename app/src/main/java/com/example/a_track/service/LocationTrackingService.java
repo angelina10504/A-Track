@@ -53,10 +53,16 @@ public class LocationTrackingService extends Service {
     private static final long UPDATE_INTERVAL = 30000; // 30 seconds
     private static final long SYNC_INTERVAL = 120000; // 2 minutes
 
+    // ✅ Datatype constants
+    private static final int DATATYPE_INSTALL = 0;
+    private static final int DATATYPE_REBOOT = 1;
+    private static final int DATATYPE_NORMAL = 2;
+    private static final int DATATYPE_MOCK = 8;
+
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
     private AppDatabase db;
-    private SessionManager sessionManager;
+    private SessionManager sessionManager;  // ✅ Using SessionManager instead of separate tracker
     private ExecutorService executorService;
     private Location lastLocation;
     private Handler handler;
@@ -64,10 +70,13 @@ public class LocationTrackingService extends Service {
     private Runnable syncRunnable;
     private PowerManager.WakeLock wakeLock;
     private Location lastSavedLocation;
-    private Location stationaryBaseLocation; // Reference point when stationary
-    private int stationaryCount = 0; // How many consecutive stationary readings
-    private static final float STATIONARY_THRESHOLD = 5.0f; // Consider stationary if moved < 5m
+    private Location stationaryBaseLocation;
+    private int stationaryCount = 0;
+    private static final float STATIONARY_THRESHOLD = 5.0f;
     private static final float MIN_SPEED = 0.5f;
+
+    // ✅ Track if we've already logged install/reboot for this session
+    private boolean hasLoggedInstallReboot = false;
 
     private final IBinder binder = new LocalBinder();
 
@@ -85,11 +94,11 @@ public class LocationTrackingService extends Service {
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         db = AppDatabase.getInstance(this);
-        sessionManager = new SessionManager(this);
+        sessionManager = new SessionManager(this);  // ✅ Single SessionManager instance
         executorService = Executors.newSingleThreadExecutor();
         handler = new Handler(Looper.getMainLooper());
 
-        // Acquire wake lock to keep service running even in sleep mode
+        // Acquire wake lock
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ATrack::LocationWakeLock");
         wakeLock.acquire();
@@ -102,7 +111,7 @@ public class LocationTrackingService extends Service {
         setupLocationCallback();
         startLocationUpdates();
         startPeriodicLocationFetch();
-        startPeriodicSync(); // Start sync
+        startPeriodicSync();
 
         Log.d(TAG, "Service started successfully");
     }
@@ -207,7 +216,7 @@ public class LocationTrackingService extends Service {
                 handler.postDelayed(this, SYNC_INTERVAL);
             }
         };
-        handler.postDelayed(syncRunnable, SYNC_INTERVAL); // First sync after 2 minutes
+        handler.postDelayed(syncRunnable, SYNC_INTERVAL);
         Log.d(TAG, "Periodic sync started (every 2 minutes)");
     }
 
@@ -252,6 +261,9 @@ public class LocationTrackingService extends Service {
             return;
         }
 
+        // ✅ STEP 1: Determine datatype
+        int datatype = determineDatatype(location);
+
         Location locationToSave;
 
         // ✅ Determine if stationary
@@ -260,35 +272,31 @@ public class LocationTrackingService extends Service {
             float distance = location.distanceTo(lastSavedLocation);
             float speed = location.hasSpeed() ? (location.getSpeed()) : 0;
 
-            // Check if stationary (small movement + low speed)
             if (distance < STATIONARY_THRESHOLD && speed < MIN_SPEED) {
                 isStationary = true;
                 stationaryCount++;
             } else {
                 isStationary = false;
                 stationaryCount = 0;
-                stationaryBaseLocation = null; // Reset when moving
+                stationaryBaseLocation = null;
             }
         }
 
         // ✅ Handle stationary vs moving
         if (isStationary) {
-            // Set base location on first stationary detection
             if (stationaryBaseLocation == null) {
                 stationaryBaseLocation = new Location(location);
                 Log.d(TAG, "🛑 Now stationary - base location set");
             }
 
-            // Use the base location (no zigzag)
             locationToSave = new Location(stationaryBaseLocation);
             locationToSave.setTime(location.getTime());
-            locationToSave.setSpeed(0); // Force speed to 0 when stationary
+            locationToSave.setSpeed(0);
             locationToSave.setBearing(lastSavedLocation != null ? lastSavedLocation.getBearing() : 0);
 
             Log.d(TAG, "📍 Stationary (" + stationaryCount + "x) - using stable coordinates");
 
         } else {
-            // Moving - use actual location
             locationToSave = location;
             Log.d(TAG, "🚗 Moving - using GPS coordinates");
         }
@@ -305,7 +313,6 @@ public class LocationTrackingService extends Service {
         // Move database operations to background thread
         executorService.execute(() -> {
             try {
-                // Get next RecNo on background thread
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
                 int nextRecNo = lastRecNo + 1;
 
@@ -333,13 +340,17 @@ public class LocationTrackingService extends Service {
                         deviceInfo.getImsiNo(),
                         mobileTime,
                         nss,
-                        nextRecNo
+                        nextRecNo,
+                        datatype  // ✅ Pass datatype here
                 );
 
                 db.locationTrackDao().insert(track);
                 lastSavedLocation = new Location(locationToSave);
 
+                // ✅ Log datatype info
+                String datatypeStr = getDatatypeString(datatype);
                 Log.d(TAG, "✓ Location saved: RecNo=" + nextRecNo +
+                        ", Datatype=" + datatype + " (" + datatypeStr + ")" +
                         ", Lat=" + location.getLatitude() +
                         ", Lng=" + location.getLongitude() +
                         ", Speed=" + speedToSave + " km/h" +
@@ -350,31 +361,77 @@ public class LocationTrackingService extends Service {
         });
     }
 
+    /**
+     * ✅ Determine the datatype for this location entry
+     * Uses SessionManager for install/reboot tracking
+     * 0 = Install, 1 = Reboot, 2 = Normal, 8 = Mock Location
+     */
+    private int determineDatatype(Location location) {
+        // Priority 1: Check for mock location
+        DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+        if (deviceInfo.isMockLocation(location)) {
+            Log.w(TAG, "🚨 MOCK LOCATION DETECTED - datatype = 8");
+            return DATATYPE_MOCK;
+        }
+
+        // Priority 2: Check for install/reboot (only once per session)
+        if (!hasLoggedInstallReboot) {
+            // Check for first install
+            if (sessionManager.isFirstRun()) {
+                Log.i(TAG, "📱 FIRST INSTALL DETECTED - datatype = 0");
+                sessionManager.markFirstRunComplete();
+                hasLoggedInstallReboot = true;
+                return DATATYPE_INSTALL;
+            }
+
+            // Check for device reboot
+            if (sessionManager.hasDeviceRebooted()) {
+                Log.i(TAG, "🔄 DEVICE REBOOT DETECTED - datatype = 1");
+                hasLoggedInstallReboot = true;
+                return DATATYPE_REBOOT;
+            }
+
+            // After first check, mark as logged
+            hasLoggedInstallReboot = true;
+        }
+
+        // Default: Normal tracking
+        return DATATYPE_NORMAL;
+    }
+
+    /**
+     * Helper method to get human-readable datatype string
+     */
+    private String getDatatypeString(int datatype) {
+        switch (datatype) {
+            case DATATYPE_INSTALL: return "Install";
+            case DATATYPE_REBOOT: return "Reboot";
+            case DATATYPE_NORMAL: return "Normal";
+            case DATATYPE_MOCK: return "Mock Location";
+            default: return "Unknown";
+        }
+    }
+
     private void syncDataToServer() {
         String mobile = sessionManager.getMobileNumber();
         if (mobile == null) return;
 
         executorService.execute(() -> {
-            // ✅ Step 1: Get all unsynced location records
             List<LocationTrack> unsyncedTracks = db.locationTrackDao().getUnsyncedTracks(mobile);
 
             if (!unsyncedTracks.isEmpty()) {
                 int totalRecords = unsyncedTracks.size();
 
-                // ✅ If 20 or fewer records, sync all at once (no batching)
                 if (totalRecords <= 20) {
                     Log.d(TAG, "📍 Syncing " + totalRecords + " records (single batch)");
                     syncBatchBlocking(unsyncedTracks);
-                }
-                // ✅ If more than 20 records, use batch syncing
-                else {
-                    int BATCH_SIZE = 20; // Sync 20 records at a time
+                } else {
+                    int BATCH_SIZE = 20;
                     int totalBatches = (totalRecords + BATCH_SIZE - 1) / BATCH_SIZE;
 
                     Log.d(TAG, "📍 Starting batch sync: " + totalRecords + " records in " +
                             totalBatches + " batches");
 
-                    // Sync in batches
                     for (int batchNum = 0; batchNum < totalBatches; batchNum++) {
                         int start = batchNum * BATCH_SIZE;
                         int end = Math.min(start + BATCH_SIZE, totalRecords);
@@ -383,17 +440,15 @@ public class LocationTrackingService extends Service {
                         Log.d(TAG, "📤 Syncing batch " + (batchNum + 1) + "/" + totalBatches +
                                 ": " + batch.size() + " records");
 
-                        // Sync this batch (blocking)
                         boolean success = syncBatchBlocking(batch);
 
                         if (!success) {
                             Log.w(TAG, "⚠ Batch " + (batchNum + 1) + " failed, continuing to next batch");
                         }
 
-                        // Small delay between batches to reduce server load
-                        if (batchNum < totalBatches - 1) { // Don't delay after last batch
+                        if (batchNum < totalBatches - 1) {
                             try {
-                                Thread.sleep(1000); // 1 second between batches
+                                Thread.sleep(1000);
                             } catch (InterruptedException e) {
                                 Log.e(TAG, "Batch delay interrupted: " + e.getMessage());
                             }
@@ -407,10 +462,7 @@ public class LocationTrackingService extends Service {
                 Log.d(TAG, "No location data to sync, checking for photos...");
             }
 
-            // ✅ Step 2: Sync photos (after all location batches)
             syncPendingPhotos();
-
-            // ✅ Step 3: Clean up old records
             cleanupOldRecords();
         });
     }
@@ -425,7 +477,6 @@ public class LocationTrackingService extends Service {
                 Log.d(TAG, "✓ Batch synced: " + syncedCount + " records");
 
                 executorService.execute(() -> {
-                    // Mark this batch as synced
                     if (!syncedIds.isEmpty()) {
                         db.locationTrackDao().markAsSynced(syncedIds);
                         Log.d(TAG, "✓ Marked " + syncedIds.size() + " records as synced");
@@ -443,9 +494,8 @@ public class LocationTrackingService extends Service {
             }
         });
 
-        // Wait for this batch to complete before returning
         try {
-            latch.await(30, TimeUnit.SECONDS); // Max 30 seconds per batch
+            latch.await(30, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Log.e(TAG, "Batch sync interrupted: " + e.getMessage());
             return false;
@@ -453,12 +503,12 @@ public class LocationTrackingService extends Service {
 
         return success[0];
     }
+
     private void syncPendingPhotos() {
         String mobile = sessionManager.getMobileNumber();
         if (mobile == null) return;
 
         executorService.execute(() -> {
-            // ✅ Get all records with unsynced photos using new query
             List<LocationTrack> unsyncedPhotos = db.locationTrackDao().getUnsyncedPhotos(mobile);
 
             if (unsyncedPhotos.isEmpty()) {
@@ -471,26 +521,21 @@ public class LocationTrackingService extends Service {
             for (LocationTrack track : unsyncedPhotos) {
                 File photoFile = new File(track.getPhotoPath());
 
-                // Check if file exists
                 if (!photoFile.exists()) {
                     Log.w(TAG, "⚠ Photo file missing, marking as synced: " + track.getPhotoPath());
-                    // Mark as synced anyway to prevent repeated attempts
                     db.locationTrackDao().markPhotoAsSynced(track.getId());
                     continue;
                 }
 
                 Log.d(TAG, "📤 Uploading photo: " + photoFile.getName() + " (" + photoFile.length() + " bytes)");
 
-                // Upload photo
                 ApiService.uploadPhoto(track, photoFile, new ApiService.PhotoUploadCallback() {
                     @Override
                     public void onSuccess(String photoPath) {
                         executorService.execute(() -> {
-                            // ✅ Mark photo as synced
                             db.locationTrackDao().markPhotoAsSynced(track.getId());
                             Log.d(TAG, "✓ Photo synced successfully: " + photoFile.getName());
 
-                            // ✅ Delete local photo after successful upload
                             if (photoFile.delete()) {
                                 Log.d(TAG, "✓ Local photo deleted: " + photoFile.getName());
                             } else {
@@ -502,13 +547,11 @@ public class LocationTrackingService extends Service {
                     @Override
                     public void onFailure(String error) {
                         Log.e(TAG, "✗ Photo upload failed (will retry): " + photoFile.getName() + " - " + error);
-                        // Don't mark as synced - will retry on next sync
                     }
                 });
 
-                // Add small delay between uploads to avoid overwhelming server
                 try {
-                    Thread.sleep(1000); // 1 second delay between photos
+                    Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Log.e(TAG, "Sleep interrupted: " + e.getMessage());
                 }
@@ -518,7 +561,6 @@ public class LocationTrackingService extends Service {
 
     private void cleanupOldRecords() {
         executorService.execute(() -> {
-            // Get today's start time (00:00:00)
             java.util.Calendar calendar = java.util.Calendar.getInstance();
             calendar.set(java.util.Calendar.HOUR_OF_DAY, 0);
             calendar.set(java.util.Calendar.MINUTE, 0);
@@ -528,7 +570,6 @@ public class LocationTrackingService extends Service {
 
             Log.d(TAG, "🧹 Cleaning up old records before: " + new java.util.Date(todayStartMillis));
 
-            // ✅ This now only deletes records where BOTH location AND photo are synced
             int deleted = db.locationTrackDao().deleteOldTracks(todayStartMillis);
 
             if (deleted > 0) {
@@ -577,28 +618,25 @@ public class LocationTrackingService extends Service {
 
         Log.d(TAG, "Service onDestroy - Stopping location tracking");
 
-        // Stop periodic location fetching
+        hasLoggedInstallReboot = false;
+
         if (handler != null && locationRunnable != null) {
             handler.removeCallbacks(locationRunnable);
         }
 
-        // Stop sync
         if (handler != null && syncRunnable != null) {
             handler.removeCallbacks(syncRunnable);
         }
 
-        // Stop location updates
         if (fusedLocationClient != null && locationCallback != null) {
             fusedLocationClient.removeLocationUpdates(locationCallback);
         }
 
-        // Release WakeLock
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
             Log.d(TAG, "WakeLock released");
         }
 
-        // Shutdown executor
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }

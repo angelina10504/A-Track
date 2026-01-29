@@ -81,6 +81,7 @@ public class ApiService {
                     o.put("angle", t.getAngle());
                     o.put("battery", t.getBattery());
                     o.put("dateTime", t.getDateTime());
+                    o.put("datatype", t.getDatatype());  // ✅ NEW: Add datatype
 
                     if (t.getPhotoPath() != null && !t.getPhotoPath().isEmpty()) {
                         o.put("photoPath", t.getPhotoPath());
@@ -198,6 +199,7 @@ public class ApiService {
                 writeFormField(out, boundary, "speed", String.valueOf(track.getSpeed()));
                 writeFormField(out, boundary, "angle", String.valueOf(track.getAngle()));
                 writeFormField(out, boundary, "battery", String.valueOf(track.getBattery()));
+                writeFormField(out, boundary, "datatype", String.valueOf(track.getDatatype())); // ✅ NEW: Add datatype
                 writeFormField(out, boundary, "gpsState", track.getGpsState());
                 writeFormField(out, boundary, "internetState", track.getInternetState());
                 writeFormField(out, boundary, "flightState", track.getFlightState());
