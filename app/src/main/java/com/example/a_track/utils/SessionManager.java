@@ -11,6 +11,9 @@ public class SessionManager {
     private static final String KEY_SESSION_DB_ID = "sessionDbId";
     private static final String KEY_LAST_BOOT_TIME = "lastBootTime";
 
+    // ✅ NEW: Track first run for install detection
+    private static final String KEY_FIRST_RUN = "isFirstRun";
+
     private SharedPreferences prefs;
     private SharedPreferences.Editor editor;
 
@@ -49,6 +52,40 @@ public class SessionManager {
 
     public long getLastBootTime() {
         return prefs.getLong(KEY_LAST_BOOT_TIME, 0);
+    }
+
+    // ✅ NEW: Check if this is the first run after install/reinstall
+    public boolean isFirstRun() {
+        return prefs.getBoolean(KEY_FIRST_RUN, true);
+    }
+
+    // ✅ NEW: Mark first run as complete
+    public void markFirstRunComplete() {
+        editor.putBoolean(KEY_FIRST_RUN, false);
+        editor.commit();
+    }
+
+    // ✅ NEW: Check if device has rebooted since last check
+    public boolean hasDeviceRebooted() {
+        long currentBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+        long lastBootTime = prefs.getLong(KEY_LAST_BOOT_TIME, 0);
+
+        // If boot time changed significantly (more than 10 seconds difference), device rebooted
+        if (lastBootTime == 0) {
+            // First time checking, save current boot time
+            editor.putLong(KEY_LAST_BOOT_TIME, currentBootTime);
+            editor.commit();
+            return false;
+        }
+
+        if (Math.abs(currentBootTime - lastBootTime) > 10000) { // 10 seconds threshold
+            // Device rebooted, update boot time
+            editor.putLong(KEY_LAST_BOOT_TIME, currentBootTime);
+            editor.commit();
+            return true;
+        }
+
+        return false;
     }
 
     public void logout() {
