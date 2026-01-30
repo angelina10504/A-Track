@@ -364,7 +364,7 @@ public class LocationTrackingService extends Service {
     /**
      * ✅ Determine the datatype for this location entry
      * Uses SessionManager for install/reboot tracking
-     * 0 = Install, 1 = Reboot, 2 = Normal, 8 = Mock Location
+     * 0 = Install, 1 = login, 2 = Normal, 8 = Mock Location
      */
     private int determineDatatype(Location location) {
         // Priority 1: Check for mock location
@@ -386,9 +386,10 @@ public class LocationTrackingService extends Service {
 
             // Check for device reboot
             if (sessionManager.hasDeviceRebooted()) {
-                Log.i(TAG, "🔄 DEVICE REBOOT DETECTED - datatype = 1");
+                Log.i(TAG, "🔑 NEW LOGIN DETECTED - datatype = 1");
+                sessionManager.markLoginLogged();  // ✅ NEW: Mark login as logged
                 hasLoggedInstallReboot = true;
-                return DATATYPE_REBOOT;
+                return DATATYPE_REBOOT;  // Using REBOOT constant but it's actually LOGIN now
             }
 
             // After first check, mark as logged

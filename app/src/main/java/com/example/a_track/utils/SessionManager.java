@@ -18,6 +18,7 @@ public class SessionManager {
     // ✅ NEW: Track app install time to detect reinstalls
     private static final String KEY_APP_INSTALL_TIME = "appInstallTime";
     private static final String KEY_INSTALL_LOGGED = "installLogged";
+    private static final String KEY_LOGIN_LOGGED = "loginLogged";
 
     private SharedPreferences prefs;
     private SharedPreferences.Editor editor;
@@ -38,6 +39,9 @@ public class SessionManager {
         editor.putString(KEY_SESSION_ID, sessionId);
         editor.putInt(KEY_SESSION_DB_ID, sessionDbId);
         editor.putLong(KEY_LAST_BOOT_TIME, currentBootTime);
+        editor.commit();
+
+        editor.putBoolean(KEY_LOGIN_LOGGED, false);
         editor.commit();
 
         Log.d(TAG, "Login session created for: " + mobileNumber);
@@ -117,31 +121,20 @@ public class SessionManager {
 
     // ✅ Check if device has rebooted since last check
     public boolean hasDeviceRebooted() {
-        long currentBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
-        long lastBootTime = prefs.getLong(KEY_LAST_BOOT_TIME, 0);
+        boolean loginLogged = prefs.getBoolean(KEY_LOGIN_LOGGED, false);
 
-        // If boot time changed significantly (more than 10 seconds difference), device rebooted
-        if (lastBootTime == 0) {
-            // First time checking, save current boot time
-            Log.d(TAG, "First boot time check - saving current boot time");
-            editor.putLong(KEY_LAST_BOOT_TIME, currentBootTime);
-            editor.commit();
-            return false;
-        }
-
-        // Allow 10 second tolerance for time drift
-        long timeDifference = Math.abs(currentBootTime - lastBootTime);
-
-        if (timeDifference > 10000) { // 10 seconds threshold
-            Log.d(TAG, "🔄 DEVICE REBOOT detected (boot time changed by " +
-                    (timeDifference / 1000) + " seconds)");
-            // Device rebooted, update boot time
-            editor.putLong(KEY_LAST_BOOT_TIME, currentBootTime);
-            editor.commit();
+        if (!loginLogged) {
+            Log.d(TAG, "🔑 NEW LOGIN detected - will log datatype=1");
             return true;
         }
 
         return false;
+    }
+
+    public void markLoginLogged() {
+        Log.d(TAG, "✓ Marking login as logged");
+        editor.putBoolean(KEY_LOGIN_LOGGED, true);
+        editor.commit();
     }
 
     public void logout() {
