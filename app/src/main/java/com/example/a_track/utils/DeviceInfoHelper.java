@@ -198,7 +198,7 @@ public class DeviceInfoHelper {
 
     // Get APK name (package name)
     public String getApkName() {
-        return context.getPackageName(); // e.g., "com.example.a_track"
+        return "A-ROU-Track"; // e.g., "com.example.a_track"
     }
 
     // Get IMSI Number (requires READ_PHONE_STATE permission)

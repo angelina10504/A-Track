@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="80dp"
+    android:height="80dp"
+    android:viewportWidth="80"
+    android:viewportHeight="80">
+
+    <!-- Red-Orange Gradient Pin -->
+    <path
+        android:pathData="M40,10 C30,10 22,18 22,28 C22,42 40,60 40,60 S58,42 58,28 C58,18 50,10 40,10 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startY="10"
+                android:endY="60"
+                android:startColor="#FF6B6B"
+                android:endColor="#FF5252"
+                android:type="linear"/>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner Circle -->
+    <path
+        android:pathData="M40,20 C34,20 29,25 29,31 C29,37 34,42 40,42 C46,42 51,37 51,31 C51,25 46,20 40,20 Z"
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.9"/>
+
+    <!-- Shadow -->
+    <path
+        android:pathData="M40,58 C48,58 54,57 54,56 C54,55 48,54 40,54 C32,54 26,55 26,56 C26,57 32,58 40,58 Z"
+        android:fillColor="#000000"
+        android:fillAlpha="0.2"/>
+</vector>
