@@ -50,7 +50,7 @@ public class LocationTrackingService extends Service {
     private static final String TAG = "LocationTrackingService";
     private static final String CHANNEL_ID = "LocationTrackingChannel";
     private static final int NOTIFICATION_ID = 1;
-    private static final long UPDATE_INTERVAL = 30000; // 30 seconds
+    private static final long UPDATE_INTERVAL = 60000; // 1 minute
     private static final long SYNC_INTERVAL = 120000; // 2 minutes
 
     // ✅ Datatype constants

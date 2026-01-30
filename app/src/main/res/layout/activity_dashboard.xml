@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@drawable/gradient_background">
+    android:background="@drawable/gradient_purple_background">
 
     <!-- Header -->
     <LinearLayout
@@ -17,8 +17,8 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="A-Track Dashboard"
-            android:textSize="20sp"
+            android:text="A-ROU-Track Dashboard"
+            android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="@android:color/white"/>
 

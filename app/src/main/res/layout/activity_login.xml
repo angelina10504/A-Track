@@ -5,13 +5,13 @@
     android:orientation="vertical"
     android:padding="24dp"
     android:gravity="center"
-    android:background="@drawable/gradient_background">
+    android:background="@drawable/gradient_purple_background">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="A-Track"
-        android:textSize="32sp"
+        android:text="A-ROU-Track"
+        android:textSize="23sp"
         android:textStyle="bold"
         android:textColor="@color/material_dynamic_primary30"
         android:layout_marginBottom="8dp"
