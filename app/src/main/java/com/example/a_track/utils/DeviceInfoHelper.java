@@ -1,5 +1,7 @@
 package com.example.a_track.utils;
 
+import static androidx.camera.core.CameraXThreads.TAG;
+
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageInfo;
@@ -28,6 +30,8 @@ import java.util.List;
 import android.os.Build;
 import android.telephony.CellInfoNr;
 import android.telephony.CellSignalStrengthNr;
+
+import com.example.a_track.R;
 
 public class DeviceInfoHelper {
 
@@ -198,7 +202,12 @@ public class DeviceInfoHelper {
 
     // Get APK name (package name)
     public String getApkName() {
-        return "A-ROU-Track"; // e.g., "com.example.a_track"
+        try {
+            return context.getString(R.string.app_name);
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting app name: " + e.getMessage());
+            return "Unknown";
+        }
     }
 
     // Get IMSI Number (requires READ_PHONE_STATE permission)
