@@ -100,7 +100,7 @@ public class LocationTrackingService extends Service {
 
         // Acquire wake lock
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ATrack::LocationWakeLock");
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ROU Track::LocationWakeLock");
         wakeLock.acquire();
 
         Log.d(TAG, "WakeLock acquired - Service will run in sleep mode");
@@ -139,8 +139,8 @@ public class LocationTrackingService extends Service {
         );
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("A-Track Active")
-                .setContentText("Tracking your location every 30 seconds")
+                .setContentTitle("ROU Track Active")
+                .setContentText("Securing your Safety")
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
@@ -195,13 +195,13 @@ public class LocationTrackingService extends Service {
         locationRunnable = new Runnable() {
             @Override
             public void run() {
-                Log.d(TAG, "30 seconds elapsed - fetching and saving location");
+                Log.d(TAG, "1 minute elapsed - fetching and saving location");
                 fetchAndSaveLocation();
                 handler.postDelayed(this, UPDATE_INTERVAL);
             }
         };
         handler.post(locationRunnable);
-        Log.d(TAG, "Periodic location fetch started (every 30 seconds)");
+        Log.d(TAG, "Periodic location fetch started (every 1 minute)");
     }
 
     private void startPeriodicSync() {
