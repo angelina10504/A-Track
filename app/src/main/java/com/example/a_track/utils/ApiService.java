@@ -173,7 +173,7 @@ public class ApiService {
 
                 Log.d(TAG, "📤 Uploading photo: " + photo.getName() + " (" + photo.length() + " bytes)");
 
-                String boundary = "----AtrackBoundary" + System.currentTimeMillis();
+                String boundary = "----ROUTrackBoundary" + System.currentTimeMillis();
                 String lineEnd = "\r\n";
                 String twoHyphens = "--";
 
