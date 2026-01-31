@@ -5,8 +5,6 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Matrix;
-import android.media.ExifInterface;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -30,15 +28,12 @@ import androidx.core.content.ContextCompat;
 
 import com.example.a_track.database.AppDatabase;
 import com.example.a_track.database.LocationTrack;
-import com.example.a_track.utils.ApiService;
 import com.example.a_track.utils.DeviceInfoHelper;
 import com.example.a_track.utils.SessionManager;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -72,8 +67,6 @@ public class CameraActivity extends AppCompatActivity {
     private float speed;
     private float angle;
     private long dateTime;
-
-    private int datatype;
 
     private AppDatabase db;
     private SessionManager sessionManager;
@@ -125,6 +118,7 @@ public class CameraActivity extends AppCompatActivity {
         btnCapture.setOnClickListener(v -> capturePhoto());
 
         btnRetake.setOnClickListener(v -> retakePhoto());
+
         btnSend.setOnClickListener(v -> {
             String remarks = etRemarks.getText() != null ?
                     etRemarks.getText().toString().trim() : "";
@@ -184,13 +178,10 @@ public class CameraActivity extends AppCompatActivity {
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build();
 
-        // Select back camera
-        CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
-
         try {
             cameraProvider.unbindAll();
             Camera camera = cameraProvider.bindToLifecycle(
-                    this, currentCameraSelector, preview, imageCapture);  // ✅ Use variable
+                    this, currentCameraSelector, preview, imageCapture);
 
             Log.d(TAG, "Camera started successfully");
         } catch (Exception e) {
@@ -243,18 +234,13 @@ public class CameraActivity extends AppCompatActivity {
 
                                 showPhotoPreview(finalPhotoFile);
                                 Toast.makeText(CameraActivity.this,
-                                        "Photo captured! ", Toast.LENGTH_SHORT).show();
-
-                                // Show Send button, hide Capture button
-                                btnCapture.setVisibility(View.GONE);
-                                btnSend.setVisibility(View.VISIBLE);
+                                        "Photo captured!", Toast.LENGTH_SHORT).show();
                             });
                         } else {
                             runOnUiThread(() -> {
-                                Log.e(TAG, "✗ Image compression failed, using original");
-                                // Use original if compression fails
-                                capturedImageFile = tempPhotoFile;
-                                showPhotoPreview(tempPhotoFile);
+                                Log.e(TAG, "✗ Image compression failed");
+                                Toast.makeText(CameraActivity.this,
+                                        "Failed to compress photo", Toast.LENGTH_SHORT).show();
                             });
                         }
                     }
@@ -313,16 +299,12 @@ public class CameraActivity extends AppCompatActivity {
         etRemarks.setText("");
     }
 
-    private Bitmap loadAndRotateBitmap(String photoPath) throws IOException {
+    private Bitmap loadAndRotateBitmap(String photoPath) {
         // Load bitmap with scaling to avoid memory issues
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = 2; // Scale down by 2x for preview
-        Bitmap bitmap = BitmapFactory.decodeFile(photoPath, options);
-
-        // ✅ No rotation needed! ImageCompressor already handled orientation
-        // The compressed file is already rotated correctly
-
-        return bitmap;
+        return BitmapFactory.decodeFile(photoPath, options);
+        // ✅ No rotation needed - ImageCompressor already handled it
     }
 
     private void savePhotoRecord(String remarks) {
@@ -340,44 +322,22 @@ public class CameraActivity extends AppCompatActivity {
         }
 
         int battery = getBatteryLevel();
-
-        // Get device info
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
         long mobileTime = deviceInfo.getMobileTime();
         int nss = deviceInfo.getNetworkSignalStrength();
 
-        Toast.makeText(this, "Compressing and saving photo...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Saving photo...", Toast.LENGTH_SHORT).show();
 
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(() -> {
             try {
-                // Step 1: Compress the captured image
-                File compressedFile = new File(getExternalFilesDir(null),
-                        "compressed_" + System.currentTimeMillis() + ".jpg");
+                // ✅ Photo is already compressed from capturePhoto()
+                File finalPhotoFile = capturedImageFile;
 
-                boolean compressed = ImageCompressor.compressImage(capturedImageFile, compressedFile);
-
-                if (!compressed) {
-                    Log.e(TAG, "Image compression failed");
-                    runOnUiThread(() -> {
-                        Toast.makeText(CameraActivity.this,
-                                "Failed to compress image", Toast.LENGTH_SHORT).show();
-                    });
-                    return;
-                }
-
-                // Delete original uncompressed file
-                if (capturedImageFile.delete()) {
-                    Log.d(TAG, "✓ Original photo deleted after compression");
-                }
-
-                // Use compressed file from now on
-                File finalPhotoFile = compressedFile;
-
-                Log.d(TAG, "✓ Image compressed: " +
+                Log.d(TAG, "✓ Using compressed photo: " +
                         ImageCompressor.getReadableFileSize(finalPhotoFile.length()));
 
-                // Get next RecNo on background thread
+                // Get next RecNo
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
                 int nextRecNo = lastRecNo + 1;
 
@@ -391,7 +351,7 @@ public class CameraActivity extends AppCompatActivity {
                         dateTime,
                         sessionId,
                         battery,
-                        finalPhotoFile.getAbsolutePath(), // Compressed file path
+                        finalPhotoFile.getAbsolutePath(),
                         remarks.isEmpty() ? null : remarks,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
@@ -407,68 +367,24 @@ public class CameraActivity extends AppCompatActivity {
                         mobileTime,
                         nss,
                         nextRecNo,
-                        datatype
+                        '2'
                 );
 
                 // Save to local database
                 long recordId = db.locationTrackDao().insert(track);
                 track.setId((int) recordId);
 
-                Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId);
-                Log.d(TAG, "✓ Compressed photo path: " + finalPhotoFile.getAbsolutePath());
+                Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId + ", RecNo: " + nextRecNo);
+                Log.d(TAG, "✓ Photo will be synced by background service");
 
-                // Try to upload immediately if online
-                if (isNetworkAvailable()) {
-                    Log.d(TAG, "📡 Network available, attempting immediate upload");
+                // ✅ REMOVED: Immediate upload
+                // Photo will sync later with all other location data
 
-                    ApiService.uploadPhoto(track, finalPhotoFile, new ApiService.PhotoUploadCallback() {
-                        @Override
-                        public void onSuccess(String photoPath) {
-                            // Mark as synced
-                            executorService.execute(() -> {
-                                try {
-                                    java.util.List<Integer> ids = new java.util.ArrayList<>();
-                                    ids.add(track.getId());
-                                    db.locationTrackDao().markAsSynced(ids);
-                                    db.locationTrackDao().markPhotoAsSynced(track.getId());
-
-                                    // Delete local file after successful upload
-                                    if (finalPhotoFile.delete()) {
-                                        Log.d(TAG, "✓ Photo uploaded and local copy deleted");
-                                    } else {
-                                        Log.w(TAG, "⚠ Photo uploaded but couldn't delete local file");
-                                    }
-                                } catch (Exception e) {
-                                    Log.e(TAG, "Error marking as synced: " + e.getMessage());
-                                }
-                            });
-
-                            runOnUiThread(() -> {
-                                Toast.makeText(CameraActivity.this,
-                                        "✓ Photo uploaded successfully!", Toast.LENGTH_SHORT).show();
-                                finish();
-                            });
-                        }
-
-                        @Override
-                        public void onFailure(String error) {
-                            Log.w(TAG, "⚠ Immediate upload failed: " + error);
-                            runOnUiThread(() -> {
-                                Toast.makeText(CameraActivity.this,
-                                        "✓ Saved locally. Will sync when online.", Toast.LENGTH_LONG).show();
-                                finish();
-                            });
-                        }
-                    });
-                } else {
-                    // No network - photo will be synced later by service
-                    Log.d(TAG, "📴 No network. Photo will sync later.");
-                    runOnUiThread(() -> {
-                        Toast.makeText(CameraActivity.this,
-                                "✓ Saved locally. Will sync when online.", Toast.LENGTH_LONG).show();
-                        finish();
-                    });
-                }
+                runOnUiThread(() -> {
+                    Toast.makeText(CameraActivity.this,
+                            "✓ Photo saved.", Toast.LENGTH_LONG).show();
+                    finish();
+                });
 
             } catch (Exception e) {
                 Log.e(TAG, "✗ Error saving photo record: " + e.getMessage());
@@ -479,13 +395,6 @@ public class CameraActivity extends AppCompatActivity {
                 });
             }
         });
-    }
-
-    private boolean isNetworkAvailable() {
-        android.net.ConnectivityManager cm =
-                (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        android.net.NetworkInfo networkInfo = cm.getActiveNetworkInfo();
-        return networkInfo != null && networkInfo.isConnected();
     }
 
     private int getBatteryLevel() {
