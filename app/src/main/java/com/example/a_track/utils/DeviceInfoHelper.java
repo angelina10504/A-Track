@@ -3,6 +3,7 @@ package com.example.a_track.utils;
 import static androidx.camera.core.CameraXThreads.TAG;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -201,6 +202,7 @@ public class DeviceInfoHelper {
     }
 
     // Get APK name (package name)
+    @SuppressLint("RestrictedApi")
     public String getApkName() {
         try {
             return context.getString(R.string.app_name);
