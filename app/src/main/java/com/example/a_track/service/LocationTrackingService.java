@@ -58,11 +58,13 @@ public class LocationTrackingService extends Service {
     private static final int DATATYPE_REBOOT = 1;
     private static final int DATATYPE_NORMAL = 2;
     private static final int DATATYPE_MOCK = 8;
+    private static final int DATATYPE_PHOTO = 50;  // ✅ NEW
+    private static final int DATATYPE_VIDEO = 60;  // ✅ NEW
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
     private AppDatabase db;
-    private SessionManager sessionManager;  // ✅ Using SessionManager instead of separate tracker
+    private SessionManager sessionManager;
     private ExecutorService executorService;
     private Location lastLocation;
     private Handler handler;
@@ -94,7 +96,7 @@ public class LocationTrackingService extends Service {
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         db = AppDatabase.getInstance(this);
-        sessionManager = new SessionManager(this);  // ✅ Single SessionManager instance
+        sessionManager = new SessionManager(this);
         executorService = Executors.newSingleThreadExecutor();
         handler = new Handler(Looper.getMainLooper());
 
@@ -325,8 +327,9 @@ public class LocationTrackingService extends Service {
                         currentTime,
                         sessionId,
                         battery,
-                        null,
-                        null,
+                        null,  // photoPath
+                        null,  // videoPath
+                        null,  // textMsg
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
                         deviceInfo.getFlightState(),
@@ -387,9 +390,9 @@ public class LocationTrackingService extends Service {
             // Check for device reboot
             if (sessionManager.hasDeviceRebooted()) {
                 Log.i(TAG, "🔑 NEW LOGIN DETECTED - datatype = 1");
-                sessionManager.markLoginLogged();  // ✅ NEW: Mark login as logged
+                sessionManager.markLoginLogged();
                 hasLoggedInstallReboot = true;
-                return DATATYPE_REBOOT;  // Using REBOOT constant but it's actually LOGIN now
+                return DATATYPE_REBOOT;
             }
 
             // After first check, mark as logged
@@ -409,6 +412,8 @@ public class LocationTrackingService extends Service {
             case DATATYPE_REBOOT: return "Reboot";
             case DATATYPE_NORMAL: return "Normal";
             case DATATYPE_MOCK: return "Mock Location";
+            case DATATYPE_PHOTO: return "Photo";      // ✅ NEW
+            case DATATYPE_VIDEO: return "Video";      // ✅ NEW
             default: return "Unknown";
         }
     }
@@ -460,10 +465,12 @@ public class LocationTrackingService extends Service {
                 }
 
             } else {
-                Log.d(TAG, "No location data to sync, checking for photos...");
+                Log.d(TAG, "No location data to sync, checking for media...");
             }
 
+            // ✅ Sync both photos and videos
             syncPendingPhotos();
+            syncPendingVideos();  // ✅ NEW
             cleanupOldRecords();
         });
     }
@@ -553,6 +560,62 @@ public class LocationTrackingService extends Service {
 
                 try {
                     Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Log.e(TAG, "Sleep interrupted: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    // ✅ NEW: Sync pending videos
+    private void syncPendingVideos() {
+        String mobile = sessionManager.getMobileNumber();
+        if (mobile == null) return;
+
+        executorService.execute(() -> {
+            List<LocationTrack> unsyncedVideos = db.locationTrackDao().getUnsyncedVideos(mobile);
+
+            if (unsyncedVideos.isEmpty()) {
+                Log.d(TAG, "✓ No pending videos to sync");
+                return;
+            }
+
+            Log.d(TAG, "🎥 Found " + unsyncedVideos.size() + " videos to sync");
+
+            for (LocationTrack track : unsyncedVideos) {
+                File videoFile = new File(track.getVideoPath());
+
+                if (!videoFile.exists()) {
+                    Log.w(TAG, "⚠ Video file missing, marking as synced: " + track.getVideoPath());
+                    db.locationTrackDao().markVideoAsSynced(track.getId());
+                    continue;
+                }
+
+                Log.d(TAG, "📤 Uploading video: " + videoFile.getName() + " (" + videoFile.length() + " bytes)");
+
+                ApiService.uploadVideo(track, videoFile, new ApiService.VideoUploadCallback() {
+                    @Override
+                    public void onSuccess(String videoPath) {
+                        executorService.execute(() -> {
+                            db.locationTrackDao().markVideoAsSynced(track.getId());
+                            Log.d(TAG, "✓ Video synced successfully: " + videoFile.getName());
+
+                            if (videoFile.delete()) {
+                                Log.d(TAG, "✓ Local video deleted: " + videoFile.getName());
+                            } else {
+                                Log.w(TAG, "⚠ Could not delete local video: " + videoFile.getName());
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onFailure(String error) {
+                        Log.e(TAG, "✗ Video upload failed (will retry): " + videoFile.getName() + " - " + error);
+                    }
+                });
+
+                try {
+                    Thread.sleep(2000);  // Longer delay for videos (larger files)
                 } catch (InterruptedException e) {
                     Log.e(TAG, "Sleep interrupted: " + e.getMessage());
                 }

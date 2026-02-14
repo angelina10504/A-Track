@@ -156,7 +156,7 @@
                 android:id="@+id/btnTakePhoto"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="📷 Take Photo"
+                android:text="📷 Camera"
                 android:layout_marginBottom="8dp"
                 android:backgroundTint="@color/material_dynamic_primary30"/>
             <Button

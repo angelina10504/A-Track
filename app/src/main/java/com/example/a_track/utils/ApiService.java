@@ -27,6 +27,7 @@ public class ApiService {
 
     private static final int TIMEOUT = 15000;
     private static final int PHOTO_TIMEOUT = 30000;
+    private static final int VIDEO_TIMEOUT = 60000;  // ✅ NEW: Longer timeout for videos
 
     /* ================================
        SYNC LOCATIONS (JSON)
@@ -81,11 +82,19 @@ public class ApiService {
                     o.put("angle", t.getAngle());
                     o.put("battery", t.getBattery());
                     o.put("dateTime", t.getDateTime());
-                    o.put("datatype", t.getDatatype());  // ✅ NEW: Add datatype
+                    o.put("datatype", t.getDatatype());  // ✅ Add datatype
 
                     if (t.getPhotoPath() != null && !t.getPhotoPath().isEmpty()) {
-                        o.put("photoPath", t.getPhotoPath());
+                        String photoFileName = new File(t.getPhotoPath()).getName();
+                        o.put("photoPath", photoFileName);
                     }
+
+                    // ✅ UPDATED: Send only filename for videoPath
+                    if (t.getVideoPath() != null && !t.getVideoPath().isEmpty()) {
+                        String videoFileName = new File(t.getVideoPath()).getName();
+                        o.put("videoPath", videoFileName);
+                    }
+
                     if (t.getTextMsg() != null && !t.getTextMsg().isEmpty()) {
                         o.put("textMsg", t.getTextMsg());
                     }
@@ -104,6 +113,8 @@ public class ApiService {
 
                     arr.put(o);
                 }
+
+
 
                 JSONObject payload = new JSONObject();
                 payload.put("locations", arr);
@@ -199,7 +210,7 @@ public class ApiService {
                 writeFormField(out, boundary, "speed", String.valueOf(track.getSpeed()));
                 writeFormField(out, boundary, "angle", String.valueOf(track.getAngle()));
                 writeFormField(out, boundary, "battery", String.valueOf(track.getBattery()));
-                writeFormField(out, boundary, "datatype", "2"); //
+                writeFormField(out, boundary, "datatype", String.valueOf(track.getDatatype()));  // ✅ FIXED: Use actual datatype
                 writeFormField(out, boundary, "gpsState", track.getGpsState());
                 writeFormField(out, boundary, "internetState", track.getInternetState());
                 writeFormField(out, boundary, "flightState", track.getFlightState());
@@ -266,6 +277,140 @@ public class ApiService {
                         String photoPath = res.optString("photoPath", "");
                         Log.d(TAG, "✓ Photo uploaded successfully: " + photoPath);
                         callback.onSuccess(photoPath);
+                    } else {
+                        String msg = res.optString("message", "Upload failed");
+                        Log.e(TAG, "✗ Upload failed: " + msg);
+                        callback.onFailure(msg);
+                    }
+                } else {
+                    Log.e(TAG, "✗ HTTP error: " + code);
+                    callback.onFailure("HTTP " + code + ": " + responseBody);
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "✗ Upload exception: " + e.getMessage());
+                e.printStackTrace();
+                callback.onFailure(e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
+
+    /* ================================
+       ✅ NEW: UPLOAD VIDEO (MULTIPART)
+       ================================ */
+
+    public interface VideoUploadCallback {
+        void onSuccess(String videoPath);
+        void onFailure(String error);
+    }
+
+    public static void uploadVideo(LocationTrack track, File video, VideoUploadCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                if (video == null || !video.exists()) {
+                    Log.e(TAG, "Video file missing");
+                    callback.onFailure("Video file missing");
+                    return;
+                }
+
+                Log.d(TAG, "📤 Uploading video: " + video.getName() + " (" + video.length() + " bytes)");
+
+                String boundary = "----ROUTrackBoundary" + System.currentTimeMillis();
+                String lineEnd = "\r\n";
+                String twoHyphens = "--";
+
+                URL url = new URL(BASE_URL + "upload_video.php");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(VIDEO_TIMEOUT);
+                conn.setReadTimeout(VIDEO_TIMEOUT);
+                conn.setDoOutput(true);
+                conn.setDoInput(true);
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+                DataOutputStream out = new DataOutputStream(conn.getOutputStream());
+
+                // Add required form fields
+                writeFormField(out, boundary, "mobileNumber", track.getMobileNumber());
+                writeFormField(out, boundary, "nss", String.valueOf(track.getNss()));
+                writeFormField(out, boundary, "recNo", String.valueOf(track.getRecNo()));
+                writeFormField(out, boundary, "dateTime", String.valueOf(track.getDateTime()));
+                writeFormField(out, boundary, "mobileTime", String.valueOf(track.getMobileTime()));
+                writeFormField(out, boundary, "latitude", String.valueOf(track.getLatitude()));
+                writeFormField(out, boundary, "longitude", String.valueOf(track.getLongitude()));
+                writeFormField(out, boundary, "speed", String.valueOf(track.getSpeed()));
+                writeFormField(out, boundary, "angle", String.valueOf(track.getAngle()));
+                writeFormField(out, boundary, "battery", String.valueOf(track.getBattery()));
+                writeFormField(out, boundary, "datatype", String.valueOf(track.getDatatype()));  // Should be 60
+                writeFormField(out, boundary, "gpsState", track.getGpsState());
+                writeFormField(out, boundary, "internetState", track.getInternetState());
+                writeFormField(out, boundary, "flightState", track.getFlightState());
+                writeFormField(out, boundary, "roamingState", track.getRoamingState());
+                writeFormField(out, boundary, "isNetThere", track.getIsNetThere());
+                writeFormField(out, boundary, "isNwThere", track.getIsNwThere());
+                writeFormField(out, boundary, "isMoving", track.getIsMoving());
+                writeFormField(out, boundary, "modelNo", track.getModelNo());
+                writeFormField(out, boundary, "modelOS", track.getModelOS());
+                writeFormField(out, boundary, "apkName", track.getApkName());
+                writeFormField(out, boundary, "imsiNo", track.getImsiNo());
+
+                // Add text message if exists
+                if (track.getTextMsg() != null && !track.getTextMsg().isEmpty()) {
+                    writeFormField(out, boundary, "textMsg", track.getTextMsg());
+                }
+
+                // Add video file
+                String mime = URLConnection.guessContentTypeFromName(video.getName());
+                if (mime == null) mime = "video/mp4";
+
+                out.writeBytes(twoHyphens + boundary + lineEnd);
+                out.writeBytes("Content-Disposition: form-data; name=\"video\"; filename=\"" +
+                        video.getName() + "\"" + lineEnd);
+                out.writeBytes("Content-Type: " + mime + lineEnd);
+                out.writeBytes("Content-Transfer-Encoding: binary" + lineEnd);
+                out.writeBytes(lineEnd);
+
+                FileInputStream fis = new FileInputStream(video);
+                byte[] buffer = new byte[4096];
+                int bytes;
+                long totalBytes = 0;
+                while ((bytes = fis.read(buffer)) != -1) {
+                    out.write(buffer, 0, bytes);
+                    totalBytes += bytes;
+                }
+                fis.close();
+
+                Log.d(TAG, "Video uploaded: " + totalBytes + " bytes sent");
+
+                out.writeBytes(lineEnd);
+                out.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd);
+                out.flush();
+                out.close();
+
+                int code = conn.getResponseCode();
+                Log.d(TAG, "Upload response code: " + code);
+
+                BufferedReader br = new BufferedReader(new InputStreamReader(
+                        code == 200 ? conn.getInputStream() : conn.getErrorStream()
+                ));
+
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+
+                String responseBody = sb.toString();
+                Log.d(TAG, "📥 Upload response: " + responseBody);
+
+                if (code == 200) {
+                    JSONObject res = new JSONObject(responseBody);
+                    if (res.optBoolean("success")) {
+                        String videoPath = res.optString("videoPath", "");
+                        Log.d(TAG, "✓ Video uploaded successfully: " + videoPath);
+                        callback.onSuccess(videoPath);
                     } else {
                         String msg = res.optString("message", "Upload failed");
                         Log.e(TAG, "✗ Upload failed: " + msg);

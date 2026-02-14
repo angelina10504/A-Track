@@ -76,6 +76,7 @@ public interface LocationTrackDao {
     @Query("DELETE FROM location_tracks " +
             "WHERE synced = 1 " +
             "AND (photoPath IS NULL OR photoPath = '' OR photoSynced = 1) " +
+            "AND (videoPath IS NULL OR videoPath = '' OR videoSynced = 1) " +
             "AND dateTime < :todayStartMillis")
     int deleteOldTracks(long todayStartMillis);
 
@@ -99,5 +100,17 @@ public interface LocationTrackDao {
 
     @Query("SELECT MAX(RecNo) FROM location_tracks WHERE mobileNumber = :mobile")
     int getLastRecNo(String mobile);
+
+    // Get records with unsynced videos
+    @Query("SELECT * FROM location_tracks " +
+            "WHERE mobileNumber = :mobile " +
+            "AND videoPath IS NOT NULL " +
+            "AND videoPath != '' " +
+            "AND videoSynced = 0 " +
+            "ORDER BY dateTime ASC")
+    List<LocationTrack> getUnsyncedVideos(String mobile);
+
+    @Query("UPDATE location_tracks SET videoSynced = 1 WHERE id = :id")
+    void markVideoAsSynced(int id);
 
 }
