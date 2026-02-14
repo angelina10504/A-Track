@@ -20,6 +20,13 @@
         android:visibility="gone"
         android:contentDescription="Photo Preview" />
 
+    <!-- Video Preview (hidden initially) -->
+    <VideoView
+        android:id="@+id/videoPreview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <!-- Top Info Bar -->
     <LinearLayout
         android:id="@+id/topBar"
@@ -47,6 +54,18 @@
             android:contentDescription="Switch Camera"
             android:padding="8dp"
             app:tint="#FFFFFF" />
+
+        <!-- Recording Timer (hidden initially) -->
+        <TextView
+            android:id="@+id/tvRecordingTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="⏺ Recording: 0s"
+            android:textColor="#FF0000"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
 
     </LinearLayout>
 
@@ -85,37 +104,48 @@
             android:gravity="center"
             android:orientation="horizontal">
 
-            <!-- Capture Button -->
+            <!-- Take Photo Button -->
             <Button
                 android:id="@+id/btnCapture"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:text="📷 Capture"
-                android:textSize="16sp"
+                android:layout_marginEnd="4dp"
+                android:text="📷 Photo"
+                android:textSize="14sp"
                 android:backgroundTint="#4CAF50" />
 
-            <!-- ✅ NEW: Retake Button (hidden initially) -->
+            <!-- Take Video Button (NEW) -->
+            <Button
+                android:id="@+id/btnCaptureVideo"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="🎥 Video"
+                android:textSize="14sp"
+                android:backgroundTint="#FF5722" />
+
+            <!-- Retake Button -->
             <Button
                 android:id="@+id/btnRetake"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="8dp"
+                android:layout_marginEnd="4dp"
                 android:text="Retake"
-                android:textSize="16sp"
+                android:textSize="14sp"
                 android:backgroundTint="#FF9800"
                 android:visibility="gone" />
 
-            <!-- Send Button (hidden initially) -->
+            <!-- Send Button -->
             <Button
                 android:id="@+id/btnSend"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="Send"
-                android:textSize="16sp"
+                android:textSize="14sp"
                 android:backgroundTint="#2196F3"
                 android:visibility="gone" />
 

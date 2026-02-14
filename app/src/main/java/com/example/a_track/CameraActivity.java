@@ -25,6 +25,19 @@ import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.camera.video.MediaStoreOutputOptions;
+import androidx.camera.video.Quality;
+import androidx.camera.video.QualitySelector;
+import androidx.camera.video.Recorder;
+import androidx.camera.video.Recording;
+import androidx.camera.video.VideoCapture;
+import androidx.camera.video.VideoRecordEvent;
+import android.media.MediaPlayer;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.VideoView;
+import androidx.core.content.PermissionChecker;
 
 import com.example.a_track.database.AppDatabase;
 import com.example.a_track.database.LocationTrack;
@@ -37,6 +50,7 @@ import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -46,6 +60,7 @@ public class CameraActivity extends AppCompatActivity {
 
     private static final String TAG = "CameraActivity";
     private static final int CAMERA_PERMISSION_CODE = 100;
+    private static final int AUDIO_PERMISSION_CODE = 101;
 
     private CameraSelector currentCameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
     private ImageButton btnSwitchCamera;
@@ -70,6 +85,18 @@ public class CameraActivity extends AppCompatActivity {
 
     private AppDatabase db;
     private SessionManager sessionManager;
+    private Button btnCaptureVideo;
+    private VideoView videoPreview;
+    private TextView tvRecordingTimer;
+    private VideoCapture<Recorder> videoCapture;
+    private Recording activeRecording;
+    private File capturedVideoFile;
+    private Handler recordingHandler;
+    private Runnable recordingRunnable;
+    private int recordingSeconds = 0;
+    private static final int MAX_RECORDING_SECONDS = 5;
+    private enum CaptureMode { PHOTO, VIDEO, NONE }
+    private CaptureMode currentMode = CaptureMode.NONE;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -83,7 +110,7 @@ public class CameraActivity extends AppCompatActivity {
         sessionManager = new SessionManager(this);
         cameraExecutor = Executors.newSingleThreadExecutor();
 
-        if (checkCameraPermission()) {
+        if (checkAllPermissions()) {
             startCamera();
         } else {
             requestCameraPermission();
@@ -95,12 +122,17 @@ public class CameraActivity extends AppCompatActivity {
     private void initViews() {
         previewView = findViewById(R.id.previewView);
         ivPhotoPreview = findViewById(R.id.ivPhotoPreview);
+        videoPreview = findViewById(R.id.videoPreview);
+        tvRecordingTimer = findViewById(R.id.tvRecordingTimer);
         etRemarks = findViewById(R.id.etRemarks);
         btnCapture = findViewById(R.id.btnCapture);
+        btnCaptureVideo = findViewById(R.id.btnCaptureVideo);
         btnSend = findViewById(R.id.btnSend);
         btnRetake = findViewById(R.id.btnRetake);
         tvLocationInfo = findViewById(R.id.tvLocationInfo);
         btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
+
+        recordingHandler = new Handler(Looper.getMainLooper());
     }
 
     private void getLocationDataFromIntent() {
@@ -117,12 +149,25 @@ public class CameraActivity extends AppCompatActivity {
     private void setupClickListeners() {
         btnCapture.setOnClickListener(v -> capturePhoto());
 
-        btnRetake.setOnClickListener(v -> retakePhoto());
+        btnCaptureVideo.setOnClickListener(v -> {
+            if (activeRecording == null) {
+                startVideoRecording();
+            } else {
+                stopVideoRecording();
+            }
+        });
+
+        btnRetake.setOnClickListener(v -> retakeCapture());
 
         btnSend.setOnClickListener(v -> {
             String remarks = etRemarks.getText() != null ?
                     etRemarks.getText().toString().trim() : "";
-            savePhotoRecord(remarks);
+
+            if (currentMode == CaptureMode.PHOTO) {
+                savePhotoRecord(remarks);
+            } else if (currentMode == CaptureMode.VIDEO) {
+                saveVideoRecord(remarks);
+            }
         });
 
         btnSwitchCamera.setOnClickListener(v -> switchCamera());
@@ -133,9 +178,18 @@ public class CameraActivity extends AppCompatActivity {
                 == PackageManager.PERMISSION_GRANTED;
     }
 
+    private boolean checkAudioPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean checkAllPermissions() {
+        return checkCameraPermission() && checkAudioPermission();
+    }
+
     private void requestCameraPermission() {
         ActivityCompat.requestPermissions(this,
-                new String[]{Manifest.permission.CAMERA},
+                new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO},
                 CAMERA_PERMISSION_CODE);
     }
 
@@ -143,11 +197,36 @@ public class CameraActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
         if (requestCode == CAMERA_PERMISSION_CODE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            boolean allGranted = true;
+
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+
+            if (allGranted) {
                 startCamera();
             } else {
-                Toast.makeText(this, "Camera permission is required!", Toast.LENGTH_LONG).show();
+                // Check which permission was denied
+                boolean cameraGranted = ContextCompat.checkSelfPermission(this,
+                        Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+                boolean audioGranted = ContextCompat.checkSelfPermission(this,
+                        Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+
+                if (!cameraGranted && !audioGranted) {
+                    Toast.makeText(this, "Camera and Microphone permissions are required!",
+                            Toast.LENGTH_LONG).show();
+                } else if (!cameraGranted) {
+                    Toast.makeText(this, "Camera permission is required!",
+                            Toast.LENGTH_LONG).show();
+                } else if (!audioGranted) {
+                    Toast.makeText(this, "Microphone permission is required for video recording!",
+                            Toast.LENGTH_LONG).show();
+                }
                 finish();
             }
         }
@@ -178,12 +257,18 @@ public class CameraActivity extends AppCompatActivity {
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build();
 
+        // VideoCapture (NEW)
+        Recorder recorder = new Recorder.Builder()
+                .setQualitySelector(QualitySelector.from(Quality.HD))
+                .build();
+        videoCapture = VideoCapture.withOutput(recorder);
+
         try {
             cameraProvider.unbindAll();
             Camera camera = cameraProvider.bindToLifecycle(
-                    this, currentCameraSelector, preview, imageCapture);
+                    this, currentCameraSelector, preview, imageCapture, videoCapture);
 
-            Log.d(TAG, "Camera started successfully");
+            Log.d(TAG, "Camera started successfully with video support");
         } catch (Exception e) {
             Log.e(TAG, "Camera binding failed: " + e.getMessage());
             Toast.makeText(this, "Failed to bind camera", Toast.LENGTH_SHORT).show();
@@ -256,8 +341,148 @@ public class CameraActivity extends AppCompatActivity {
                 });
     }
 
+    private void startVideoRecording() {
+        if (videoCapture == null) {
+            Toast.makeText(this, "Video capture not ready", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Create file name
+        String mobileNumber = sessionManager.getMobileNumber();
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMddHHmmss", Locale.getDefault());
+        sdf.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata")); // or whatever your server timezone is
+        String timestamp = sdf.format(new Date(dateTime));
+        String fileName = mobileNumber + "_"+timestamp + ".mp4";
+
+        // Create Videos directory
+        File videoDir = new File(getFilesDir(), "Videos");
+        if (!videoDir.exists()) {
+            videoDir.mkdirs();
+        }
+        capturedVideoFile = new File(videoDir, fileName);
+
+        // Prepare output options
+        MediaStoreOutputOptions outputOptions = new MediaStoreOutputOptions
+                .Builder(getContentResolver(), android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                .build();
+
+        // Start recording
+        if (!checkAudioPermission()) {
+            Toast.makeText(this, "Please grant microphone permission to record video with audio",
+                    Toast.LENGTH_LONG).show();
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.RECORD_AUDIO},
+                    AUDIO_PERMISSION_CODE);
+            return;
+        }
+
+        activeRecording = videoCapture.getOutput()
+                .prepareRecording(this, new androidx.camera.video.FileOutputOptions.Builder(capturedVideoFile).build())
+                .withAudioEnabled()
+                .start(ContextCompat.getMainExecutor(this), videoRecordEvent -> {
+                    if (videoRecordEvent instanceof VideoRecordEvent.Start) {
+                        runOnUiThread(() -> {
+                            btnCaptureVideo.setText("⏹ Stop");
+                            btnCaptureVideo.setBackgroundTintList(
+                                    ContextCompat.getColorStateList(this, android.R.color.holo_red_dark));
+                            tvRecordingTimer.setVisibility(View.VISIBLE);
+                            btnCapture.setEnabled(false);
+                            btnSwitchCamera.setVisibility(View.GONE);
+                            startRecordingTimer();
+                        });
+
+                    } else if (videoRecordEvent instanceof VideoRecordEvent.Finalize) {
+                        VideoRecordEvent.Finalize finalizeEvent = (VideoRecordEvent.Finalize) videoRecordEvent;
+
+                        runOnUiThread(() -> {
+                            stopRecordingTimer();
+
+                            if (!finalizeEvent.hasError()) {
+                                Log.d(TAG, "Video saved: " + capturedVideoFile.getAbsolutePath());
+                                showVideoPreview(capturedVideoFile);
+                                Toast.makeText(this, "Video recorded!", Toast.LENGTH_SHORT).show();
+                            } else {
+                                Log.e(TAG, "Video recording error: " + finalizeEvent.getError());
+                                Toast.makeText(this, "Failed to record video", Toast.LENGTH_SHORT).show();
+                            }
+
+                            btnCaptureVideo.setText("🎥 Video");
+                            btnCaptureVideo.setBackgroundTintList(
+                                    ContextCompat.getColorStateList(this, android.R.color.holo_orange_dark));
+                            tvRecordingTimer.setVisibility(View.GONE);
+                            btnCapture.setEnabled(true);
+                        });
+
+                        activeRecording = null;
+                    }
+                });
+    }
+
+    private void stopVideoRecording() {
+        if (activeRecording != null) {
+            activeRecording.stop();
+            activeRecording = null;
+        }
+    }
+
+    private void startRecordingTimer() {
+        recordingSeconds = 0;
+        recordingRunnable = new Runnable() {
+            @Override
+            public void run() {
+                recordingSeconds++;
+                tvRecordingTimer.setText("⏺ Recording: " + recordingSeconds + "s");
+
+                if (recordingSeconds >= MAX_RECORDING_SECONDS) {
+                    stopVideoRecording();
+                } else {
+                    recordingHandler.postDelayed(this, 1000);
+                }
+            }
+        };
+        recordingHandler.post(recordingRunnable);
+    }
+
+    private void stopRecordingTimer() {
+        if (recordingHandler != null && recordingRunnable != null) {
+            recordingHandler.removeCallbacks(recordingRunnable);
+        }
+        recordingSeconds = 0;
+    }
+
+    private void showVideoPreview(File videoFile) {
+        try {
+            currentMode = CaptureMode.VIDEO;
+
+            // Hide camera preview
+            previewView.setVisibility(View.GONE);
+            ivPhotoPreview.setVisibility(View.GONE);
+            videoPreview.setVisibility(View.VISIBLE);
+
+            // Set video
+            videoPreview.setVideoPath(videoFile.getAbsolutePath());
+            videoPreview.setOnPreparedListener(mp -> {
+                mp.setLooping(true);
+                mp.start();
+            });
+            videoPreview.start();
+
+            // Update buttons
+            btnCapture.setVisibility(View.GONE);
+            btnCaptureVideo.setVisibility(View.GONE);
+            btnRetake.setVisibility(View.VISIBLE);
+            btnSend.setVisibility(View.VISIBLE);
+            btnSwitchCamera.setVisibility(View.GONE);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing video preview: " + e.getMessage());
+            Toast.makeText(this, "Error showing video preview", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void showPhotoPreview(File photoFile) {
         try {
+            currentMode = CaptureMode.PHOTO;
             // Load and display the captured photo
             Bitmap bitmap = loadAndRotateBitmap(photoFile.getAbsolutePath());
             ivPhotoPreview.setImageBitmap(bitmap);
@@ -278,19 +503,27 @@ public class CameraActivity extends AppCompatActivity {
         }
     }
 
-    private void retakePhoto() {
-        // Delete the captured photo
-        if (capturedImageFile != null && capturedImageFile.exists()) {
+    private void retakeCapture() {
+        // Delete the captured file
+        if (currentMode == CaptureMode.PHOTO && capturedImageFile != null && capturedImageFile.exists()) {
             capturedImageFile.delete();
             capturedImageFile = null;
+        } else if (currentMode == CaptureMode.VIDEO && capturedVideoFile != null && capturedVideoFile.exists()) {
+            videoPreview.stopPlayback();
+            capturedVideoFile.delete();
+            capturedVideoFile = null;
         }
+
+        currentMode = CaptureMode.NONE;
 
         // Show camera preview again
         previewView.setVisibility(View.VISIBLE);
         ivPhotoPreview.setVisibility(View.GONE);
+        videoPreview.setVisibility(View.GONE);
 
         // Update buttons
         btnCapture.setVisibility(View.VISIBLE);
+        btnCaptureVideo.setVisibility(View.VISIBLE);
         btnRetake.setVisibility(View.GONE);
         btnSend.setVisibility(View.GONE);
         btnSwitchCamera.setVisibility(View.VISIBLE);
@@ -352,6 +585,7 @@ public class CameraActivity extends AppCompatActivity {
                         sessionId,
                         battery,
                         finalPhotoFile.getAbsolutePath(),
+                        null,
                         remarks.isEmpty() ? null : remarks,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
@@ -367,7 +601,7 @@ public class CameraActivity extends AppCompatActivity {
                         mobileTime,
                         nss,
                         nextRecNo,
-                        '2'
+                        50
                 );
 
                 // Save to local database
@@ -392,6 +626,93 @@ public class CameraActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     Toast.makeText(CameraActivity.this,
                             "Failed to save photo", Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
+    }
+
+    private void saveVideoRecord(String remarks) {
+        if (capturedVideoFile == null) {
+            Toast.makeText(this, "No video captured", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String mobileNumber = sessionManager.getMobileNumber();
+        String sessionId = sessionManager.getSessionId();
+
+        if (mobileNumber == null || sessionId == null) {
+            Toast.makeText(this, "Session error. Please login again.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        int battery = getBatteryLevel();
+        DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+        long mobileTime = deviceInfo.getMobileTime();
+        int nss = deviceInfo.getNetworkSignalStrength();
+
+        Toast.makeText(this, "Saving video...", Toast.LENGTH_SHORT).show();
+
+        ExecutorService executorService = Executors.newSingleThreadExecutor();
+        executorService.execute(() -> {
+            try {
+                File finalVideoFile = capturedVideoFile;
+
+                Log.d(TAG, "✓ Video file: " + finalVideoFile.getAbsolutePath());
+                Log.d(TAG, "✓ Video size: " + (finalVideoFile.length() / 1024) + " KB");
+
+                // Get next RecNo
+                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int nextRecNo = lastRecNo + 1;
+
+                // Create record with datatype = 60 for video
+                LocationTrack track = new LocationTrack(
+                        mobileNumber,
+                        latitude,
+                        longitude,
+                        speed,
+                        angle,
+                        dateTime,
+                        sessionId,
+                        battery,
+                        null,  // photoPath is null
+                        finalVideoFile.getAbsolutePath(),  // videoPath
+                        remarks.isEmpty() ? null : remarks,
+                        deviceInfo.getGpsState(),
+                        deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(),
+                        deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(),
+                        deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(speed),
+                        deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(),
+                        deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(),
+                        mobileTime,
+                        nss,
+                        nextRecNo,
+                        60  // datatype = 60 for VIDEO
+                );
+
+                // Save to local database
+                long recordId = db.locationTrackDao().insert(track);
+                track.setId((int) recordId);
+
+                Log.d(TAG, "✓ Video record saved locally with ID: " + recordId + ", RecNo: " + nextRecNo);
+                Log.d(TAG, "✓ Video will be synced by background service");
+
+                runOnUiThread(() -> {
+                    Toast.makeText(CameraActivity.this,
+                            "✓ Video saved.", Toast.LENGTH_LONG).show();
+                    finish();
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "✗ Error saving video record: " + e.getMessage());
+                e.printStackTrace();
+                runOnUiThread(() -> {
+                    Toast.makeText(CameraActivity.this,
+                            "Failed to save video", Toast.LENGTH_SHORT).show();
                 });
             }
         });
@@ -437,6 +758,19 @@ public class CameraActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+
+        if (activeRecording != null) {
+            activeRecording.stop();
+        }
+
+        if (videoPreview != null) {
+            videoPreview.stopPlayback();
+        }
+
+        if (recordingHandler != null && recordingRunnable != null) {
+            recordingHandler.removeCallbacks(recordingRunnable);
+        }
+
         if (cameraExecutor != null) {
             cameraExecutor.shutdown();
         }

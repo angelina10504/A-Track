@@ -41,6 +41,12 @@ public class LocationTrack {
     @ColumnInfo(name = "photoPath")
     private String photoPath;
 
+    @ColumnInfo(name = "videoPath")
+    private String videoPath;
+
+    @ColumnInfo(name = "videoSynced")
+    private int videoSynced = 0;
+
     @ColumnInfo(name = "textMsg")
     private String textMsg;
 
@@ -78,6 +84,7 @@ public class LocationTrack {
             String sessionId,
             int battery,
             String photoPath,
+            String videoPath,
             String textMsg,
             String gpsState,
             String internetState,
@@ -105,6 +112,7 @@ public class LocationTrack {
         this.battery = battery;
         this.synced = 0;        // always unsynced when created
         this.photoPath = photoPath;
+        this.videoPath = videoPath;
         this.textMsg = textMsg;
         this.gpsState = gpsState;
         this.internetState = internetState;
@@ -230,4 +238,10 @@ public class LocationTrack {
     // ✅ NEW: Datatype getter/setter
     public int getDatatype() { return datatype; }
     public void setDatatype(int datatype) { this.datatype = datatype; }
+
+    public String getVideoPath() { return videoPath; }
+    public void setVideoPath(String videoPath) { this.videoPath = videoPath; }
+
+    public int getVideoSynced() { return videoSynced; }
+    public void setVideoSynced(int videoSynced) { this.videoSynced = videoSynced; }
 }
