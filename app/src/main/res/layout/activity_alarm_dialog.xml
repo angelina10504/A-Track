@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#CC000000"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:background="@android:color/white"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:gravity="center">
+
+        <!-- Alert Icon -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚠️"
+            android:textSize="72sp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Message -->
+        <TextView
+            android:id="@+id/tvAlarmMessage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="All OK? Press this button"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/black"
+            android:gravity="center"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Timer -->
+        <TextView
+            android:id="@+id/tvAlarmTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="30 seconds"
+            android:textSize="20sp"
+            android:textColor="#FF5722"
+            android:textStyle="bold"
+            android:layout_marginBottom="32dp" />
+
+        <!-- All OK Button -->
+        <Button
+            android:id="@+id/btnAllOk"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="All OK"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:backgroundTint="#4CAF50"
+            android:paddingVertical="16dp" />
+
+    </LinearLayout>
+
+</RelativeLayout>

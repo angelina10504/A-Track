@@ -20,9 +20,12 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+import java.util.Random;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
+
+import com.example.a_track.AlarmDialogActivity;
 import com.example.a_track.DashboardActivity;
 import com.example.a_track.R;
 import com.example.a_track.database.AppDatabase;
@@ -68,14 +71,19 @@ public class LocationTrackingService extends Service {
     private ExecutorService executorService;
     private Location lastLocation;
     private Handler handler;
+    private Handler alarmHandler;
     private Runnable locationRunnable;
     private Runnable syncRunnable;
+    private Runnable alarmRunnable;
+    private Random random;
     private PowerManager.WakeLock wakeLock;
     private Location lastSavedLocation;
     private Location stationaryBaseLocation;
     private int stationaryCount = 0;
     private static final float STATIONARY_THRESHOLD = 5.0f;
     private static final float MIN_SPEED = 0.5f;
+    private static final int MIN_ALARM_INTERVAL = 15 * 60 * 1000; // 15 minutes
+    private static final int MAX_ALARM_INTERVAL = 25 * 60 * 1000; // 25 minutes
 
     // ✅ Track if we've already logged install/reboot for this session
     private boolean hasLoggedInstallReboot = false;
@@ -114,6 +122,13 @@ public class LocationTrackingService extends Service {
         startLocationUpdates();
         startPeriodicLocationFetch();
         startPeriodicSync();
+
+        // Initialize alarm
+        random = new Random();
+        alarmHandler = new Handler(Looper.getMainLooper());
+        scheduleNextAlarm();
+
+        Log.d(TAG, "Alarm system initialized");
 
         Log.d(TAG, "Service started successfully");
     }
@@ -676,6 +691,36 @@ public class LocationTrackingService extends Service {
         return START_STICKY;
     }
 
+    private void scheduleNextAlarm() {
+        // Random interval between 15-25 minutes
+        int randomInterval = MIN_ALARM_INTERVAL +
+                random.nextInt(MAX_ALARM_INTERVAL - MIN_ALARM_INTERVAL);
+
+        int minutes = randomInterval / 60000;
+        Log.d(TAG, "⏰ Next alarm scheduled in " + minutes + " minutes");
+
+        alarmRunnable = new Runnable() {
+            @Override
+            public void run() {
+                triggerAlarm();
+            }
+        };
+
+        alarmHandler.postDelayed(alarmRunnable, randomInterval);
+    }
+
+    private void triggerAlarm() {
+        Log.d(TAG, "🚨 ALARM TRIGGERED - Showing alert dialog");
+
+        Intent intent = new Intent(this, AlarmDialogActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        startActivity(intent);
+
+        // Schedule next alarm
+        scheduleNextAlarm();
+    }
+
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -703,6 +748,11 @@ public class LocationTrackingService extends Service {
 
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
+        }
+        // Stop alarm
+        if (alarmHandler != null && alarmRunnable != null) {
+            alarmHandler.removeCallbacks(alarmRunnable);
+            Log.d(TAG, "Alarm scheduler stopped");
         }
 
         Log.d(TAG, "Service stopped and cleaned up");

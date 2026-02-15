@@ -23,6 +23,9 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:allowBackup="true"
@@ -87,6 +90,14 @@
         <activity
             android:name=".CameraActivity"
             android:exported="false" />
+
+        <!-- Alarm Dialog Activity -->
+        <activity
+            android:name=".AlarmDialogActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Dialog"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true" />
 
 
         <!-- Location Tracking Service -->
