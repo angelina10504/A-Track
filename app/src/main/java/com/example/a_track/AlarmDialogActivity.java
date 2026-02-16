@@ -1,6 +1,8 @@
 package com.example.a_track;
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.Context;
+import android.content.Intent;
 import android.media.MediaPlayer;
 import android.media.RingtoneManager;
 import android.net.Uri;
@@ -40,6 +42,11 @@ public class AlarmDialogActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        if (savedInstanceState != null) {
+            finish();
+            return;
+        }
 
         // Show on lock screen and turn screen on
         getWindow().addFlags(
@@ -118,12 +125,28 @@ public class AlarmDialogActivity extends AppCompatActivity {
         Toast.makeText(this, "Response recorded: " + responseTime + "s", Toast.LENGTH_SHORT).show();
 
         saveAlarmRecord(70, (int) responseTime); // datatype 70 = acknowledged
+        rescheduleNextAlarm();
+
+        // ✅ Dismiss notification
+        NotificationManager notificationManager =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        notificationManager.cancel(999);
+
+        Toast.makeText(this, "Response recorded: " + responseTime + "s", Toast.LENGTH_SHORT).show();
+
+        saveAlarmRecord(70, (int) responseTime);
+        rescheduleNextAlarm();
         finish();
     }
 
     private void handleTimeout() {
         stopAlarm();
         saveAlarmRecord(71, 30); // datatype 71 = missed
+        rescheduleNextAlarm();
+        // ✅ Dismiss notification
+        NotificationManager notificationManager =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        notificationManager.cancel(999);
         finish();
     }
 
@@ -141,6 +164,11 @@ public class AlarmDialogActivity extends AppCompatActivity {
         if (vibrator != null) {
             vibrator.cancel();
         }
+
+        // ✅ Dismiss the notification
+        NotificationManager notificationManager =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        notificationManager.cancel(999); // Same ID used in AlarmReceiver
     }
 
     private void saveAlarmRecord(int datatype, int responseTime) {
@@ -158,10 +186,23 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
                 long currentTime = System.currentTimeMillis();
 
-                // Get last location or use 0,0
+                // ✅ Get last location from database instead of 0,0
+                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
+
                 double lat = 0.0;
                 double lng = 0.0;
-                // You can get last location from LocationTrackingService if needed
+                float speed = 0.0f;
+                float angle = 0.0f;
+
+                if (lastTrack != null) {
+                    lat = lastTrack.getLatitude();
+                    lng = lastTrack.getLongitude();
+                    speed = lastTrack.getSpeed();
+                    angle = lastTrack.getAngle();
+                    Log.d(TAG, "Using last known location: " + lat + ", " + lng);
+                } else {
+                    Log.w(TAG, "No previous location found, using 0,0");
+                }
 
                 int battery = getBatteryLevel();
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
@@ -175,13 +216,13 @@ public class AlarmDialogActivity extends AppCompatActivity {
                         mobileNumber,
                         lat,
                         lng,
-                        0, // speed
-                        0, // angle
+                        speed,
+                        angle,
                         currentTime,
                         sessionId,
                         battery,
-                        null, // photoPath
-                        null, // videoPath
+                        null,
+                        null,
                         textMsg,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
@@ -189,7 +230,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
                         deviceInfo.getRoamingState(),
                         deviceInfo.getIsNetThere(),
                         deviceInfo.getIsNwThere(),
-                        deviceInfo.getIsMoving(0),
+                        deviceInfo.getIsMoving(speed),
                         deviceInfo.getModelNo(),
                         deviceInfo.getModelOS(),
                         deviceInfo.getApkName(),
@@ -203,7 +244,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 db.locationTrackDao().insert(track);
 
                 Log.d(TAG, "✓ Alarm record saved: datatype=" + datatype +
-                        ", responseTime=" + responseTime + "s");
+                        ", responseTime=" + responseTime + "s, location=" + lat + "," + lng);
 
             } catch (Exception e) {
                 Log.e(TAG, "Error saving alarm record: " + e.getMessage());
@@ -228,6 +269,12 @@ public class AlarmDialogActivity extends AppCompatActivity {
             Log.e(TAG, "Error getting battery: " + e.getMessage());
         }
         return 0;
+    }
+    private void rescheduleNextAlarm() {
+        // Notify the service to schedule next alarm
+        Intent serviceIntent = new Intent(this, com.example.a_track.service.LocationTrackingService.class);
+        serviceIntent.setAction("RESCHEDULE_ALARM");
+        startService(serviceIntent);
     }
 
     @Override
