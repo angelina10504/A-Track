@@ -21,6 +21,8 @@ import com.example.a_track.utils.DeviceInfoHelper;
 import com.example.a_track.utils.SessionManager;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import android.app.KeyguardManager;
+import android.os.Build;
 public class AlarmDialogActivity extends AppCompatActivity {
 
     private static final String TAG = "AlarmDialogActivity";
@@ -39,6 +41,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
     private AppDatabase db;
     private SessionManager sessionManager;
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -48,13 +51,26 @@ public class AlarmDialogActivity extends AppCompatActivity {
             return;
         }
 
-        // Show on lock screen and turn screen on
-        getWindow().addFlags(
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
-                        WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD |
-                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
-                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-        );
+        // ✅ Modern way to handle lock screen for Android 8.0+ (API 27+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+
+            // For Android 15+, also request to dismiss keyguard
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                KeyguardManager keyguardManager =
+                        (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+                keyguardManager.requestDismissKeyguard(this, null);
+            }
+        } else {
+            // Fallback for older Android versions
+            getWindow().addFlags(
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
+                            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD |
+                            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
+                            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            );
+        }
 
         setContentView(R.layout.activity_alarm_dialog);
 

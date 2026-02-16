@@ -26,27 +26,28 @@ public class AlarmReceiver extends BroadcastReceiver {
         // Acquire wake lock
         PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,  // ✅ Just use PARTIAL_WAKE_LOCK
+                PowerManager.PARTIAL_WAKE_LOCK,
                 "ATrack::AlarmWakeLock"
         );
-        wakeLock.acquire(30000); // 30 seconds
+        wakeLock.acquire(30000);
 
         Log.d(TAG, "WakeLock acquired");
 
         // Start vibration
         Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
-        long[] pattern = {0, 1000, 500}; // 0ms delay, 1000ms vibrate, 500ms pause
-        vibrator.vibrate(pattern, 0); // Repeat from index 0
+        long[] pattern = {0, 1000, 500};
+        vibrator.vibrate(pattern, 0);
 
         Log.d(TAG, "Vibration started");
 
         // Create notification channel
         createNotificationChannel(context);
 
-        // Launch activity
+        // Launch activity with full screen intent
         Intent dialogIntent = new Intent(context, AlarmDialogActivity.class);
         dialogIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
-                Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                Intent.FLAG_ACTIVITY_CLEAR_TOP |
+                Intent.FLAG_ACTIVITY_NO_USER_ACTION);  // ✅ Added for Android 15
 
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 context,
@@ -61,7 +62,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
         }
 
-        // Create notification
+        // Create high-priority notification with full screen intent
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle("⚠️ Safety Check")
@@ -72,7 +73,8 @@ public class AlarmReceiver extends BroadcastReceiver {
                 .setSound(alarmSound)
                 .setVibrate(pattern)
                 .setContentIntent(pendingIntent)
-                .setFullScreenIntent(pendingIntent, true);
+                .setFullScreenIntent(pendingIntent, true)  // This ensures it works on Android 15
+                .setOngoing(false);  // ✅ Not ongoing so it can be dismissed
 
         NotificationManager notificationManager =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -80,8 +82,19 @@ public class AlarmReceiver extends BroadcastReceiver {
 
         Log.d(TAG, "Notification shown with sound");
 
-        // Also launch activity
-        context.startActivity(dialogIntent);
+        // ✅ For Android 15: Check if we can start activity from background
+        if (Build.VERSION.SDK_INT >= 35) {  // Android 15 (VANILLA_ICE_CREAM)
+            // Android 15+ - rely on full screen intent notification
+            Log.d(TAG, "Android 15+ detected - using full screen intent");
+        } else {
+            // Android 14 and below - directly start activity
+            try {
+                context.startActivity(dialogIntent);
+                Log.d(TAG, "Activity started directly");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to start activity: " + e.getMessage());
+            }
+        }
 
         // Release wake lock after delay
         new android.os.Handler().postDelayed(() -> {

@@ -98,9 +98,10 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Dialog"
             android:showOnLockScreen="true"
-            android:launchMode="singleInstance"
             android:turnScreenOn="true"
-            android:excludeFromRecents="true"/>
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:showForAllUsers="true" />
 
 
         <!-- Location Tracking Service -->

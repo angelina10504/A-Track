@@ -122,6 +122,7 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     private void requestBatteryOptimization() {
+        // Battery optimization for Android 6+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
             String packageName = getPackageName();
@@ -138,7 +139,7 @@ public class LoginActivity extends AppCompatActivity {
             }
         }
 
-        // Request exact alarm permission for Android 12+
+        // Exact alarm permission for Android 12+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
             if (!alarmManager.canScheduleExactAlarms()) {
@@ -148,6 +149,48 @@ public class LoginActivity extends AppCompatActivity {
                     Toast.makeText(this, "Please allow alarms and reminders for safety checks", Toast.LENGTH_LONG).show();
                 } catch (Exception e) {
                     Log.e("LoginActivity", "Failed to request alarm permission: " + e.getMessage());
+                }
+            }
+        }
+
+        // Notification permission for Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this,
+                    android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.ActivityCompat.requestPermissions(this,
+                        new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                        101);
+            }
+        }
+
+        // ✅ NEW: Full-screen intent permission for Android 14+ (CRITICAL for lock screen alarms)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {  // Android 14+
+            android.app.NotificationManager notificationManager =
+                    (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+
+            if (notificationManager != null && !notificationManager.canUseFullScreenIntent()) {
+                try {
+                    // Guide user to enable full-screen intent permission
+                    Toast.makeText(this,
+                            "Please enable 'Alarms & reminders' permission for lock screen alerts",
+                            Toast.LENGTH_LONG).show();
+
+                    // On Android 14+, this opens the "Alarms & reminders" settings
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                } catch (Exception e) {
+                    Log.e("LoginActivity", "Failed to request full-screen intent permission: " + e.getMessage());
+
+                    // Fallback: Open app settings page
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    } catch (Exception ex) {
+                        Log.e("LoginActivity", "Failed to open app settings: " + ex.getMessage());
+                    }
                 }
             }
         }
