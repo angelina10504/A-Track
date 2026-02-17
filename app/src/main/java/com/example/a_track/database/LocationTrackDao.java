@@ -113,4 +113,7 @@ public interface LocationTrackDao {
     @Query("UPDATE location_tracks SET videoSynced = 1 WHERE id = :id")
     void markVideoAsSynced(int id);
 
+    @Query("SELECT * FROM location_tracks WHERE mobileNumber = :mobile ORDER BY dateTime DESC LIMIT 1")
+    LocationTrack getLastLocationSync(String mobile);
+
 }

@@ -1,6 +1,8 @@
 package com.example.a_track;
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.Context;
+import android.content.Intent;
 import android.media.MediaPlayer;
 import android.media.RingtoneManager;
 import android.net.Uri;
@@ -19,6 +21,8 @@ import com.example.a_track.utils.DeviceInfoHelper;
 import com.example.a_track.utils.SessionManager;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import android.app.KeyguardManager;
+import android.os.Build;
 public class AlarmDialogActivity extends AppCompatActivity {
 
     private static final String TAG = "AlarmDialogActivity";
@@ -37,17 +41,36 @@ public class AlarmDialogActivity extends AppCompatActivity {
     private AppDatabase db;
     private SessionManager sessionManager;
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Show on lock screen and turn screen on
-        getWindow().addFlags(
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
-                        WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD |
-                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
-                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-        );
+        if (savedInstanceState != null) {
+            finish();
+            return;
+        }
+
+        // ✅ Modern way to handle lock screen for Android 8.0+ (API 27+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+
+            // For Android 15+, also request to dismiss keyguard
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                KeyguardManager keyguardManager =
+                        (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+                keyguardManager.requestDismissKeyguard(this, null);
+            }
+        } else {
+            // Fallback for older Android versions
+            getWindow().addFlags(
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
+                            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD |
+                            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
+                            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            );
+        }
 
         setContentView(R.layout.activity_alarm_dialog);
 
@@ -111,19 +134,34 @@ public class AlarmDialogActivity extends AppCompatActivity {
     }
 
     private void handleResponse() {
+        if (responded) return;  // ✅ Guard against double execution
         responded = true;
-        long responseTime = (System.currentTimeMillis() - startTime) / 1000; // in seconds
+
+        long responseTime = (System.currentTimeMillis() - startTime) / 1000;
 
         stopAlarm();
+
+        // ✅ Dismiss notification
+        NotificationManager notificationManager =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        notificationManager.cancel(999);
+
+        saveAlarmRecord(70, (int) responseTime);
+        rescheduleNextAlarm();
+
         Toast.makeText(this, "Response recorded: " + responseTime + "s", Toast.LENGTH_SHORT).show();
 
-        saveAlarmRecord(70, (int) responseTime); // datatype 70 = acknowledged
         finish();
     }
 
     private void handleTimeout() {
         stopAlarm();
         saveAlarmRecord(71, 30); // datatype 71 = missed
+        rescheduleNextAlarm();
+        // ✅ Dismiss notification
+        NotificationManager notificationManager =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        notificationManager.cancel(999);
         finish();
     }
 
@@ -141,6 +179,11 @@ public class AlarmDialogActivity extends AppCompatActivity {
         if (vibrator != null) {
             vibrator.cancel();
         }
+
+        // ✅ Dismiss the notification
+        NotificationManager notificationManager =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        notificationManager.cancel(999); // Same ID used in AlarmReceiver
     }
 
     private void saveAlarmRecord(int datatype, int responseTime) {
@@ -158,10 +201,23 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
                 long currentTime = System.currentTimeMillis();
 
-                // Get last location or use 0,0
+                // ✅ Get last location from database instead of 0,0
+                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
+
                 double lat = 0.0;
                 double lng = 0.0;
-                // You can get last location from LocationTrackingService if needed
+                float speed = 0.0f;
+                float angle = 0.0f;
+
+                if (lastTrack != null) {
+                    lat = lastTrack.getLatitude();
+                    lng = lastTrack.getLongitude();
+                    speed = lastTrack.getSpeed();
+                    angle = lastTrack.getAngle();
+                    Log.d(TAG, "Using last known location: " + lat + ", " + lng);
+                } else {
+                    Log.w(TAG, "No previous location found, using 0,0");
+                }
 
                 int battery = getBatteryLevel();
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
@@ -175,13 +231,13 @@ public class AlarmDialogActivity extends AppCompatActivity {
                         mobileNumber,
                         lat,
                         lng,
-                        0, // speed
-                        0, // angle
+                        speed,
+                        angle,
                         currentTime,
                         sessionId,
                         battery,
-                        null, // photoPath
-                        null, // videoPath
+                        null,
+                        null,
                         textMsg,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
@@ -189,7 +245,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
                         deviceInfo.getRoamingState(),
                         deviceInfo.getIsNetThere(),
                         deviceInfo.getIsNwThere(),
-                        deviceInfo.getIsMoving(0),
+                        deviceInfo.getIsMoving(speed),
                         deviceInfo.getModelNo(),
                         deviceInfo.getModelOS(),
                         deviceInfo.getApkName(),
@@ -203,7 +259,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 db.locationTrackDao().insert(track);
 
                 Log.d(TAG, "✓ Alarm record saved: datatype=" + datatype +
-                        ", responseTime=" + responseTime + "s");
+                        ", responseTime=" + responseTime + "s, location=" + lat + "," + lng);
 
             } catch (Exception e) {
                 Log.e(TAG, "Error saving alarm record: " + e.getMessage());
@@ -228,6 +284,12 @@ public class AlarmDialogActivity extends AppCompatActivity {
             Log.e(TAG, "Error getting battery: " + e.getMessage());
         }
         return 0;
+    }
+    private void rescheduleNextAlarm() {
+        // Notify the service to schedule next alarm
+        Intent serviceIntent = new Intent(this, com.example.a_track.service.LocationTrackingService.class);
+        serviceIntent.setAction("RESCHEDULE_ALARM");
+        startService(serviceIntent);
     }
 
     @Override

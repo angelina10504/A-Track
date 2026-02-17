@@ -24,8 +24,10 @@ import java.util.Random;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
-
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import com.example.a_track.AlarmDialogActivity;
+import com.example.a_track.AlarmReceiver;
 import com.example.a_track.DashboardActivity;
 import com.example.a_track.R;
 import com.example.a_track.database.AppDatabase;
@@ -125,7 +127,6 @@ public class LocationTrackingService extends Service {
 
         // Initialize alarm
         random = new Random();
-        alarmHandler = new Handler(Looper.getMainLooper());
         scheduleNextAlarm();
 
         Log.d(TAG, "Alarm system initialized");
@@ -685,28 +686,103 @@ public class LocationTrackingService extends Service {
         return binder;
     }
 
+    private void saveAlarmDismissed() {
+        String mobileNumber = sessionManager.getMobileNumber();
+        String sessionId = sessionManager.getSessionId();
+
+        if (mobileNumber == null || sessionId == null) return;
+
+        executorService.execute(() -> {
+            try {
+                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
+
+                double lat = lastTrack != null ? lastTrack.getLatitude() : 0.0;
+                double lng = lastTrack != null ? lastTrack.getLongitude() : 0.0;
+                float speed = lastTrack != null ? lastTrack.getSpeed() : 0.0f;
+                float angle = lastTrack != null ? lastTrack.getAngle() : 0.0f;
+
+                DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+
+                LocationTrack track = new LocationTrack(
+                        mobileNumber, lat, lng, speed, angle,
+                        System.currentTimeMillis(), sessionId,
+                        getBatteryLevel(), null, null,
+                        "ALARM_MISS:30",
+                        deviceInfo.getGpsState(), deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(speed), deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(), deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
+                        deviceInfo.getNetworkSignalStrength(),
+                        lastRecNo + 1, 71  // datatype 71 = MISSED
+                );
+
+                db.locationTrackDao().insert(track);
+                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=71");
+
+            } catch (Exception e) {
+                Log.e(TAG, "Error saving dismissed alarm: " + e.getMessage());
+            }
+        });
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service onStartCommand");
+
+        if (intent != null) {
+            String action = intent.getAction();
+
+            if ("RESCHEDULE_ALARM".equals(action)) {
+                Log.d(TAG, "⏰ Rescheduling next alarm after user response");
+                scheduleNextAlarm();
+
+            } else if ("ALARM_DISMISSED".equals(action)) {
+                Log.d(TAG, "🔕 Alarm dismissed - saving as MISSED and rescheduling");
+                saveAlarmDismissed();
+                scheduleNextAlarm();
+            }
+        }
+
         return START_STICKY;
     }
 
     private void scheduleNextAlarm() {
-        // Random interval between 15-25 minutes
         int randomInterval = MIN_ALARM_INTERVAL +
                 random.nextInt(MAX_ALARM_INTERVAL - MIN_ALARM_INTERVAL);
 
-        int minutes = randomInterval / 60000;
-        Log.d(TAG, "⏰ Next alarm scheduled in " + minutes + " minutes");
+        long triggerTime = System.currentTimeMillis() + randomInterval;
+        int seconds = randomInterval / 1000;
 
-        alarmRunnable = new Runnable() {
-            @Override
-            public void run() {
-                triggerAlarm();
+        Log.d(TAG, "⏰ SCHEDULING ALARM:");
+        Log.d(TAG, "   - Interval: " + seconds + " seconds");
+        Log.d(TAG, "   - Trigger time: " + new java.util.Date(triggerTime));
+
+        // ✅ CHANGED: Use BroadcastReceiver instead of Activity
+        Intent intent = new Intent(this, AlarmReceiver.class);
+
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                this, 123, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (alarmManager.canScheduleExactAlarms()) {
+                Log.d(TAG, "✓ Can schedule exact alarms");
+            } else {
+                Log.e(TAG, "✗ CANNOT schedule exact alarms!");
             }
-        };
+        }
 
-        alarmHandler.postDelayed(alarmRunnable, randomInterval);
+        alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
+        );
+
+        Log.d(TAG, "✓ Alarm scheduled via BroadcastReceiver");
     }
 
     private void triggerAlarm() {
@@ -749,10 +825,25 @@ public class LocationTrackingService extends Service {
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }
-        // Stop alarm
-        if (alarmHandler != null && alarmRunnable != null) {
-            alarmHandler.removeCallbacks(alarmRunnable);
-            Log.d(TAG, "Alarm scheduler stopped");
+
+        // DON'T cancel alarm - let it persist
+        // Alarm will restart the service when it fires
+
+        Log.d(TAG, "Service stopped - alarm will continue");
+
+        // ✅ Cancel scheduled alarm on logout
+        Intent intent = new Intent(this, AlarmReceiver.class);
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                this,
+                123,
+                intent,
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        if (pendingIntent != null) {
+            AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+            alarmManager.cancel(pendingIntent);
+            Log.d(TAG, "Alarm cancelled on service destroy");
         }
 
         Log.d(TAG, "Service stopped and cleaned up");
