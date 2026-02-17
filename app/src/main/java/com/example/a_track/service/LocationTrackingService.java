@@ -686,13 +686,64 @@ public class LocationTrackingService extends Service {
         return binder;
     }
 
+    private void saveAlarmDismissed() {
+        String mobileNumber = sessionManager.getMobileNumber();
+        String sessionId = sessionManager.getSessionId();
+
+        if (mobileNumber == null || sessionId == null) return;
+
+        executorService.execute(() -> {
+            try {
+                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
+
+                double lat = lastTrack != null ? lastTrack.getLatitude() : 0.0;
+                double lng = lastTrack != null ? lastTrack.getLongitude() : 0.0;
+                float speed = lastTrack != null ? lastTrack.getSpeed() : 0.0f;
+                float angle = lastTrack != null ? lastTrack.getAngle() : 0.0f;
+
+                DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+
+                LocationTrack track = new LocationTrack(
+                        mobileNumber, lat, lng, speed, angle,
+                        System.currentTimeMillis(), sessionId,
+                        getBatteryLevel(), null, null,
+                        "ALARM_MISS:30",
+                        deviceInfo.getGpsState(), deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(speed), deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(), deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
+                        deviceInfo.getNetworkSignalStrength(),
+                        lastRecNo + 1, 71  // datatype 71 = MISSED
+                );
+
+                db.locationTrackDao().insert(track);
+                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=71");
+
+            } catch (Exception e) {
+                Log.e(TAG, "Error saving dismissed alarm: " + e.getMessage());
+            }
+        });
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service onStartCommand");
 
-        if (intent != null && "RESCHEDULE_ALARM".equals(intent.getAction())) {
-            Log.d(TAG, "⏰ Rescheduling next alarm after user response");
-            scheduleNextAlarm();
+        if (intent != null) {
+            String action = intent.getAction();
+
+            if ("RESCHEDULE_ALARM".equals(action)) {
+                Log.d(TAG, "⏰ Rescheduling next alarm after user response");
+                scheduleNextAlarm();
+
+            } else if ("ALARM_DISMISSED".equals(action)) {
+                Log.d(TAG, "🔕 Alarm dismissed - saving as MISSED and rescheduling");
+                saveAlarmDismissed();
+                scheduleNextAlarm();
+            }
         }
 
         return START_STICKY;

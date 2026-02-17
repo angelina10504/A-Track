@@ -22,6 +22,24 @@ public class AlarmReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         Log.d(TAG, "🚨 Alarm received at: " + new java.util.Date());
+        // ✅ Handle notification dismissed by swipe
+        if ("DISMISS_ALARM".equals(intent.getAction())) {
+            Log.d(TAG, "🔕 Notification dismissed by user - stopping vibration");
+
+            // Stop vibration
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            vibrator.cancel();
+
+            // Save as MISSED since user dismissed without pressing ALL OK
+            // Start a service to save the record
+            Intent serviceIntent = new Intent(context, com.example.a_track.service.LocationTrackingService.class);
+            serviceIntent.setAction("ALARM_DISMISSED");
+            context.startService(serviceIntent);
+
+            Log.d(TAG, "Vibration stopped, alarm marked as missed");
+            return;
+        }
+
 
         // Acquire wake lock
         PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
@@ -55,6 +73,16 @@ public class AlarmReceiver extends BroadcastReceiver {
                 dialogIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
+        // Intent to stop vibration when notification is swiped away
+        Intent dismissIntent = new Intent(context, AlarmReceiver.class);
+        dismissIntent.setAction("DISMISS_ALARM");
+
+        PendingIntent dismissPendingIntent = PendingIntent.getBroadcast(
+                context,
+                1,
+                dismissIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
 
         // Get alarm sound
         Uri alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
@@ -74,6 +102,7 @@ public class AlarmReceiver extends BroadcastReceiver {
                 .setVibrate(pattern)
                 .setContentIntent(pendingIntent)
                 .setFullScreenIntent(pendingIntent, true)  // This ensures it works on Android 15
+                .setDeleteIntent(dismissPendingIntent)
                 .setOngoing(false);  // ✅ Not ongoing so it can be dismissed
 
         NotificationManager notificationManager =

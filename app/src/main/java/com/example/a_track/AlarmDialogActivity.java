@@ -134,24 +134,23 @@ public class AlarmDialogActivity extends AppCompatActivity {
     }
 
     private void handleResponse() {
+        if (responded) return;  // ✅ Guard against double execution
         responded = true;
-        long responseTime = (System.currentTimeMillis() - startTime) / 1000; // in seconds
+
+        long responseTime = (System.currentTimeMillis() - startTime) / 1000;
 
         stopAlarm();
-        Toast.makeText(this, "Response recorded: " + responseTime + "s", Toast.LENGTH_SHORT).show();
-
-        saveAlarmRecord(70, (int) responseTime); // datatype 70 = acknowledged
-        rescheduleNextAlarm();
 
         // ✅ Dismiss notification
         NotificationManager notificationManager =
                 (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         notificationManager.cancel(999);
 
-        Toast.makeText(this, "Response recorded: " + responseTime + "s", Toast.LENGTH_SHORT).show();
-
         saveAlarmRecord(70, (int) responseTime);
         rescheduleNextAlarm();
+
+        Toast.makeText(this, "Response recorded: " + responseTime + "s", Toast.LENGTH_SHORT).show();
+
         finish();
     }
 
