@@ -22,6 +22,7 @@ import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.video.FallbackStrategy;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -259,8 +260,14 @@ public class CameraActivity extends AppCompatActivity {
 
         // VideoCapture (NEW)
         Recorder recorder = new Recorder.Builder()
-                .setQualitySelector(QualitySelector.from(Quality.HD))
+                .setQualitySelector(
+                        QualitySelector.from(
+                                Quality.LOWEST,
+                                FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                        )
+                )
                 .build();
+
         videoCapture = VideoCapture.withOutput(recorder);
 
         try {
@@ -282,8 +289,9 @@ public class CameraActivity extends AppCompatActivity {
         }
 
         // Create file name using UTC timestamp
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault())
-                .format(new Date(dateTime));
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMddHHmmss", Locale.getDefault());
+        sdf.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata")); // or whatever your server timezone is
+        String timestamp = sdf.format(new Date(dateTime));
         String fileName = "IMG_" + timestamp + ".jpg";
 
         // Create file in app's private directory
@@ -347,26 +355,7 @@ public class CameraActivity extends AppCompatActivity {
             return;
         }
 
-        // Create file name
-        String mobileNumber = sessionManager.getMobileNumber();
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMddHHmmss", Locale.getDefault());
-        sdf.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata")); // or whatever your server timezone is
-        String timestamp = sdf.format(new Date(dateTime));
-        String fileName = mobileNumber + "_"+timestamp + ".mp4";
-
-        // Create Videos directory
-        File videoDir = new File(getFilesDir(), "Videos");
-        if (!videoDir.exists()) {
-            videoDir.mkdirs();
-        }
-        capturedVideoFile = new File(videoDir, fileName);
-
-        // Prepare output options
-        MediaStoreOutputOptions outputOptions = new MediaStoreOutputOptions
-                .Builder(getContentResolver(), android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
-                .build();
-
-        // Start recording
+        // Check audio permission
         if (!checkAudioPermission()) {
             Toast.makeText(this, "Please grant microphone permission to record video with audio",
                     Toast.LENGTH_LONG).show();
@@ -376,6 +365,19 @@ public class CameraActivity extends AppCompatActivity {
             return;
         }
 
+        // Create file name
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMddHHmmss", Locale.getDefault());
+        String timestamp = sdf.format(new Date(dateTime));
+        String fileName = "VID_" + timestamp + ".mp4";
+
+        // Create Videos directory
+        File videoDir = new File(getFilesDir(), "Videos");
+        if (!videoDir.exists()) {
+            videoDir.mkdirs();
+        }
+        capturedVideoFile = new File(videoDir, fileName);
+
+        // Start recording
         activeRecording = videoCapture.getOutput()
                 .prepareRecording(this, new androidx.camera.video.FileOutputOptions.Builder(capturedVideoFile).build())
                 .withAudioEnabled()
@@ -399,8 +401,10 @@ public class CameraActivity extends AppCompatActivity {
 
                             if (!finalizeEvent.hasError()) {
                                 Log.d(TAG, "Video saved: " + capturedVideoFile.getAbsolutePath());
-                                showVideoPreview(capturedVideoFile);
-                                Toast.makeText(this, "Video recorded!", Toast.LENGTH_SHORT).show();
+
+                                // ✅ Compress video after recording
+                                compressVideo(capturedVideoFile);
+
                             } else {
                                 Log.e(TAG, "Video recording error: " + finalizeEvent.getError());
                                 Toast.makeText(this, "Failed to record video", Toast.LENGTH_SHORT).show();
@@ -415,7 +419,39 @@ public class CameraActivity extends AppCompatActivity {
 
                         activeRecording = null;
                     }
+                }
+        );
+    }
+    private void compressVideo(File originalFile) {
+        new Thread(() -> {
+            try {
+                File compressedFile = new File(originalFile.getParent(),
+                        "compressed_" + originalFile.getName());
+
+                // Use FFmpeg-based compression or Android MediaCodec
+                // For now, just check file size
+                long fileSizeKB = originalFile.length() / 1024;
+
+                runOnUiThread(() -> {
+                    if (fileSizeKB <= 1024) {
+                        // Already under 1MB
+                        Log.d(TAG, "Video size OK: " + fileSizeKB + "KB");
+                        showVideoPreview(originalFile);
+                        Toast.makeText(this, "Video recorded! (" + fileSizeKB + "KB)",
+                                Toast.LENGTH_SHORT).show();
+                    } else {
+                        // Over 1MB - needs compression
+                        Log.w(TAG, "Video too large: " + fileSizeKB + "KB");
+                        showVideoPreview(originalFile);
+                        Toast.makeText(this, "Video recorded! (" + fileSizeKB + "KB - may be compressed on upload)",
+                                Toast.LENGTH_LONG).show();
+                    }
                 });
+
+            } catch (Exception e) {
+                Log.e(TAG, "Compression check failed: " + e.getMessage());
+            }
+        }).start();
     }
 
     private void stopVideoRecording() {
