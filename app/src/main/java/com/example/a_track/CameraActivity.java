@@ -262,7 +262,7 @@ public class CameraActivity extends AppCompatActivity {
         Recorder recorder = new Recorder.Builder()
                 .setQualitySelector(
                         QualitySelector.from(
-                                Quality.LOWEST,
+                                Quality.LOWEST,  // ✅ Use SD quality (480p) instead of HD
                                 FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
                         )
                 )
@@ -382,76 +382,218 @@ public class CameraActivity extends AppCompatActivity {
                 .prepareRecording(this, new androidx.camera.video.FileOutputOptions.Builder(capturedVideoFile).build())
                 .withAudioEnabled()
                 .start(ContextCompat.getMainExecutor(this), videoRecordEvent -> {
-                    if (videoRecordEvent instanceof VideoRecordEvent.Start) {
-                        runOnUiThread(() -> {
-                            btnCaptureVideo.setText("⏹ Stop");
-                            btnCaptureVideo.setBackgroundTintList(
-                                    ContextCompat.getColorStateList(this, android.R.color.holo_red_dark));
-                            tvRecordingTimer.setVisibility(View.VISIBLE);
-                            btnCapture.setEnabled(false);
-                            btnSwitchCamera.setVisibility(View.GONE);
-                            startRecordingTimer();
-                        });
+                            if (videoRecordEvent instanceof VideoRecordEvent.Start) {
+                                runOnUiThread(() -> {
+                                    btnCaptureVideo.setText("⏹ Stop");
+                                    btnCaptureVideo.setBackgroundTintList(
+                                            ContextCompat.getColorStateList(this, android.R.color.holo_red_dark));
+                                    tvRecordingTimer.setVisibility(View.VISIBLE);
+                                    btnCapture.setEnabled(false);
+                                    btnSwitchCamera.setVisibility(View.GONE);
+                                    startRecordingTimer();
+                                });
 
-                    } else if (videoRecordEvent instanceof VideoRecordEvent.Finalize) {
-                        VideoRecordEvent.Finalize finalizeEvent = (VideoRecordEvent.Finalize) videoRecordEvent;
+                            } else if (videoRecordEvent instanceof VideoRecordEvent.Finalize) {
+                                VideoRecordEvent.Finalize finalizeEvent = (VideoRecordEvent.Finalize) videoRecordEvent;
 
-                        runOnUiThread(() -> {
-                            stopRecordingTimer();
+                                runOnUiThread(() -> {
+                                    stopRecordingTimer();
 
-                            if (!finalizeEvent.hasError()) {
-                                Log.d(TAG, "Video saved: " + capturedVideoFile.getAbsolutePath());
+                                    if (!finalizeEvent.hasError()) {
+                                        Log.d(TAG, "Video saved: " + capturedVideoFile.getAbsolutePath());
 
-                                // ✅ Compress video after recording
-                                compressVideo(capturedVideoFile);
+                                        // ✅ Compress video after recording
+                                        compressVideo(capturedVideoFile);
 
-                            } else {
-                                Log.e(TAG, "Video recording error: " + finalizeEvent.getError());
-                                Toast.makeText(this, "Failed to record video", Toast.LENGTH_SHORT).show();
+                                    } else {
+                                        Log.e(TAG, "Video recording error: " + finalizeEvent.getError());
+                                        Toast.makeText(this, "Failed to record video", Toast.LENGTH_SHORT).show();
+                                    }
+
+                                    btnCaptureVideo.setText("🎥 Video");
+                                    btnCaptureVideo.setBackgroundTintList(
+                                            ContextCompat.getColorStateList(this, android.R.color.holo_orange_dark));
+                                    tvRecordingTimer.setVisibility(View.GONE);
+                                    btnCapture.setEnabled(true);
+                                });
+
+                                activeRecording = null;
                             }
-
-                            btnCaptureVideo.setText("🎥 Video");
-                            btnCaptureVideo.setBackgroundTintList(
-                                    ContextCompat.getColorStateList(this, android.R.color.holo_orange_dark));
-                            tvRecordingTimer.setVisibility(View.GONE);
-                            btnCapture.setEnabled(true);
-                        });
-
-                        activeRecording = null;
-                    }
-                }
-        );
+                        }
+                );
     }
     private void compressVideo(File originalFile) {
         new Thread(() -> {
             try {
+                long fileSizeKB = originalFile.length() / 1024;
+                Log.d(TAG, "Original video size: " + fileSizeKB + " KB");
+
+                if (fileSizeKB <= 1024) {
+                    // Already under 1MB, no compression needed
+                    Log.d(TAG, "✓ Video already under 1MB, skipping compression");
+                    runOnUiThread(() -> {
+                        capturedVideoFile = originalFile;
+                        showVideoPreview(originalFile);
+                        Toast.makeText(this, "Video recorded! (" + fileSizeKB + " KB)",
+                                Toast.LENGTH_SHORT).show();
+                    });
+                    return;
+                }
+
+                // Needs compression
+                Log.d(TAG, "⚙ Compressing video...");
+                runOnUiThread(() ->
+                        Toast.makeText(this, "Compressing video...", Toast.LENGTH_SHORT).show()
+                );
+
                 File compressedFile = new File(originalFile.getParent(),
                         "compressed_" + originalFile.getName());
 
-                // Use FFmpeg-based compression or Android MediaCodec
-                // For now, just check file size
-                long fileSizeKB = originalFile.length() / 1024;
+                boolean success = transcodeVideo(originalFile, compressedFile);
 
                 runOnUiThread(() -> {
-                    if (fileSizeKB <= 1024) {
-                        // Already under 1MB
-                        Log.d(TAG, "Video size OK: " + fileSizeKB + "KB");
-                        showVideoPreview(originalFile);
-                        Toast.makeText(this, "Video recorded! (" + fileSizeKB + "KB)",
+                    if (success && compressedFile.exists()) {
+                        long compressedKB = compressedFile.length() / 1024;
+                        Log.d(TAG, "✓ Compressed: " + fileSizeKB + " KB → " + compressedKB + " KB");
+
+                        // Delete original, use compressed
+                        originalFile.delete();
+                        capturedVideoFile = compressedFile;
+
+                        showVideoPreview(compressedFile);
+                        Toast.makeText(this,
+                                "Video ready! (" + compressedKB + " KB)",
                                 Toast.LENGTH_SHORT).show();
                     } else {
-                        // Over 1MB - needs compression
-                        Log.w(TAG, "Video too large: " + fileSizeKB + "KB");
+                        // Compression failed, use original anyway
+                        Log.w(TAG, "⚠ Compression failed, using original");
+                        capturedVideoFile = originalFile;
                         showVideoPreview(originalFile);
-                        Toast.makeText(this, "Video recorded! (" + fileSizeKB + "KB - may be compressed on upload)",
-                                Toast.LENGTH_LONG).show();
+                        Toast.makeText(this,
+                                "Video recorded! (" + fileSizeKB + " KB)",
+                                Toast.LENGTH_SHORT).show();
                     }
                 });
 
             } catch (Exception e) {
-                Log.e(TAG, "Compression check failed: " + e.getMessage());
+                Log.e(TAG, "Compression error: " + e.getMessage());
+                runOnUiThread(() -> showVideoPreview(originalFile));
             }
         }).start();
+    }
+
+    private boolean transcodeVideo(File input, File output) {
+        android.media.MediaExtractor extractor = new android.media.MediaExtractor();
+        android.media.MediaMuxer muxer = null;
+
+        try {
+            extractor.setDataSource(input.getAbsolutePath());
+
+            // Find video and audio tracks
+            int videoTrackIndex = -1;
+            int audioTrackIndex = -1;
+            android.media.MediaFormat videoFormat = null;
+            android.media.MediaFormat audioFormat = null;
+
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                android.media.MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.getString(android.media.MediaFormat.KEY_MIME);
+                if (mime != null && mime.startsWith("video/")) {
+                    videoTrackIndex = i;
+                    videoFormat = format;
+                } else if (mime != null && mime.startsWith("audio/")) {
+                    audioTrackIndex = i;
+                    audioFormat = format;
+                }
+            }
+
+            if (videoTrackIndex == -1) {
+                Log.e(TAG, "No video track found");
+                return false;
+            }
+
+            // ✅ Set target bitrate to keep output under 1MB for 5s video
+            // 1MB = 8Mbits, for 5s = 1.6Mbps max, use 1Mbps to be safe
+            if (videoFormat != null) {
+                videoFormat.setInteger(android.media.MediaFormat.KEY_BIT_RATE, 1000000); // 1 Mbps
+                videoFormat.setInteger(android.media.MediaFormat.KEY_FRAME_RATE, 24);
+                videoFormat.setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+            }
+
+            muxer = new android.media.MediaMuxer(
+                    output.getAbsolutePath(),
+                    android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+            );
+
+            // Add tracks to muxer
+            int muxerVideoTrack = -1;
+            int muxerAudioTrack = -1;
+
+            if (videoFormat != null) {
+                muxerVideoTrack = muxer.addTrack(videoFormat);
+            }
+            if (audioFormat != null) {
+                muxerAudioTrack = muxer.addTrack(audioFormat);
+            }
+
+            muxer.start();
+
+            // Copy video track
+            if (videoTrackIndex != -1) {
+                extractor.selectTrack(videoTrackIndex);
+                android.media.MediaCodec.BufferInfo bufferInfo = new android.media.MediaCodec.BufferInfo();
+                java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(1024 * 1024);
+
+                while (true) {
+                    int sampleSize = extractor.readSampleData(buffer, 0);
+                    if (sampleSize < 0) break;
+
+                    bufferInfo.offset = 0;
+                    bufferInfo.size = sampleSize;
+                    bufferInfo.presentationTimeUs = extractor.getSampleTime();
+                    bufferInfo.flags = extractor.getSampleFlags();
+
+                    muxer.writeSampleData(muxerVideoTrack, buffer, bufferInfo);
+                    extractor.advance();
+                }
+                extractor.unselectTrack(videoTrackIndex);
+            }
+
+            // Copy audio track
+            if (audioTrackIndex != -1 && muxerAudioTrack != -1) {
+                extractor.selectTrack(audioTrackIndex);
+                android.media.MediaCodec.BufferInfo bufferInfo = new android.media.MediaCodec.BufferInfo();
+                java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(512 * 1024);
+
+                while (true) {
+                    int sampleSize = extractor.readSampleData(buffer, 0);
+                    if (sampleSize < 0) break;
+
+                    bufferInfo.offset = 0;
+                    bufferInfo.size = sampleSize;
+                    bufferInfo.presentationTimeUs = extractor.getSampleTime();
+                    bufferInfo.flags = extractor.getSampleFlags();
+
+                    muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo);
+                    extractor.advance();
+                }
+                extractor.unselectTrack(audioTrackIndex);
+            }
+
+            muxer.stop();
+            Log.d(TAG, "✓ Transcode complete");
+            return true;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Transcode failed: " + e.getMessage());
+            if (output.exists()) output.delete();
+            return false;
+        } finally {
+            extractor.release();
+            if (muxer != null) {
+                try { muxer.release(); } catch (Exception ignored) {}
+            }
+        }
     }
 
     private void stopVideoRecording() {
@@ -606,9 +748,12 @@ public class CameraActivity extends AppCompatActivity {
                 Log.d(TAG, "✓ Using compressed photo: " +
                         ImageCompressor.getReadableFileSize(finalPhotoFile.length()));
 
-                // Get next RecNo
-                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                }
                 int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
 
                 // Create record with compressed photo path
                 LocationTrack track = new LocationTrack(
@@ -696,9 +841,12 @@ public class CameraActivity extends AppCompatActivity {
                 Log.d(TAG, "✓ Video file: " + finalVideoFile.getAbsolutePath());
                 Log.d(TAG, "✓ Video size: " + (finalVideoFile.length() / 1024) + " KB");
 
-                // Get next RecNo
-                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                }
                 int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
 
                 // Create record with datatype = 60 for video
                 LocationTrack track = new LocationTrack(

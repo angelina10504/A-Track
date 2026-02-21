@@ -24,9 +24,12 @@ import java.util.Random;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
+import android.provider.Settings;
+import androidx.core.app.NotificationCompat;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import com.example.a_track.AlarmDialogActivity;
+import com.example.a_track.AlarmJobService;
 import com.example.a_track.AlarmReceiver;
 import com.example.a_track.DashboardActivity;
 import com.example.a_track.R;
@@ -41,6 +44,9 @@ import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
+import android.app.job.JobInfo;
+import android.app.job.JobScheduler;
+import android.content.ComponentName;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -74,6 +80,8 @@ public class LocationTrackingService extends Service {
     private Location lastLocation;
     private Handler handler;
     private Handler alarmHandler;
+    private Handler healthCheckHandler;
+    private Handler permissionCheckHandler;
     private Runnable locationRunnable;
     private Runnable syncRunnable;
     private Runnable alarmRunnable;
@@ -128,6 +136,59 @@ public class LocationTrackingService extends Service {
         // Initialize alarm
         random = new Random();
         scheduleNextAlarm();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            JobScheduler jobScheduler = (JobScheduler) getSystemService(JOB_SCHEDULER_SERVICE);
+            ComponentName componentName = new ComponentName(this, AlarmJobService.class);
+
+            JobInfo jobInfo = new JobInfo.Builder(12345, componentName)
+                    .setPeriodic(15 * 60 * 1000) // Every 15 minutes
+                    .setPersisted(true) // Survive reboot
+                    .setRequiresCharging(false)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_NONE)
+                    .build();
+
+            jobScheduler.schedule(jobInfo);
+            Log.d(TAG, "JobScheduler backup alarm scheduled");
+        }
+
+        checkAlarmPermission();
+        checkBatteryOptimization();
+
+        // ✅ NEW: Alarm health check every 10 minutes
+        healthCheckHandler = new Handler(Looper.getMainLooper());
+        Runnable healthCheckRunnable = new Runnable() {
+            @Override
+            public void run() {
+                Intent intent = new Intent(LocationTrackingService.this, AlarmReceiver.class);
+                boolean alarmUp = (PendingIntent.getBroadcast(
+                        LocationTrackingService.this, 123, intent,
+                        PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+                ) != null);
+
+                if (!alarmUp) {
+                    Log.w(TAG, "⚠️ ALARM LOST! Rescheduling now...");
+                    scheduleNextAlarm();
+                } else {
+                    Log.d(TAG, "✓ Alarm health check: OK");
+                }
+
+                healthCheckHandler.postDelayed(this, 10 * 60 * 1000);
+            }
+        };
+        healthCheckHandler.postDelayed(healthCheckRunnable, 10 * 60 * 1000);
+
+        // ✅ NEW: Permission check every 30 minutes
+        permissionCheckHandler = new Handler(Looper.getMainLooper());
+        Runnable permissionCheckRunnable = new Runnable() {
+            @Override
+            public void run() {
+                checkAlarmPermission();
+                checkBatteryOptimization();
+                permissionCheckHandler.postDelayed(this, 30 * 60 * 1000);
+            }
+        };
+        permissionCheckHandler.postDelayed(permissionCheckRunnable, 30 * 60 * 1000);
 
         Log.d(TAG, "Alarm system initialized");
 
@@ -497,13 +558,12 @@ public class LocationTrackingService extends Service {
 
         ApiService.syncLocations(batch, new ApiService.SyncCallback() {
             @Override
-            public void onSuccess(int syncedCount, List<Integer> syncedIds) {
-                Log.d(TAG, "✓ Batch synced: " + syncedCount + " records");
-
+            public void onSuccess(int syncedCount, List<Integer> confirmedIds) {
                 executorService.execute(() -> {
-                    if (!syncedIds.isEmpty()) {
-                        db.locationTrackDao().markAsSynced(syncedIds);
-                        Log.d(TAG, "✓ Marked " + syncedIds.size() + " records as synced");
+                    if (!confirmedIds.isEmpty()) {
+                        // ✅ Only mark server-confirmed records as synced
+                        db.locationTrackDao().markAsSynced(confirmedIds);
+                        Log.d(TAG, "✓ Marked " + confirmedIds.size() + " records as synced");
                     }
                     success[0] = true;
                     latch.countDown();
@@ -686,48 +746,6 @@ public class LocationTrackingService extends Service {
         return binder;
     }
 
-    private void saveAlarmDismissed() {
-        String mobileNumber = sessionManager.getMobileNumber();
-        String sessionId = sessionManager.getSessionId();
-
-        if (mobileNumber == null || sessionId == null) return;
-
-        executorService.execute(() -> {
-            try {
-                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
-
-                double lat = lastTrack != null ? lastTrack.getLatitude() : 0.0;
-                double lng = lastTrack != null ? lastTrack.getLongitude() : 0.0;
-                float speed = lastTrack != null ? lastTrack.getSpeed() : 0.0f;
-                float angle = lastTrack != null ? lastTrack.getAngle() : 0.0f;
-
-                DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
-                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
-
-                LocationTrack track = new LocationTrack(
-                        mobileNumber, lat, lng, speed, angle,
-                        System.currentTimeMillis(), sessionId,
-                        getBatteryLevel(), null, null,
-                        "ALARM_MISS:30",
-                        deviceInfo.getGpsState(), deviceInfo.getInternetState(),
-                        deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
-                        deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
-                        deviceInfo.getIsMoving(speed), deviceInfo.getModelNo(),
-                        deviceInfo.getModelOS(), deviceInfo.getApkName(),
-                        deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
-                        deviceInfo.getNetworkSignalStrength(),
-                        lastRecNo + 1, 71  // datatype 71 = MISSED
-                );
-
-                db.locationTrackDao().insert(track);
-                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=71");
-
-            } catch (Exception e) {
-                Log.e(TAG, "Error saving dismissed alarm: " + e.getMessage());
-            }
-        });
-    }
-
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service onStartCommand");
@@ -783,6 +801,7 @@ public class LocationTrackingService extends Service {
         );
 
         Log.d(TAG, "✓ Alarm scheduled via BroadcastReceiver");
+        logAlarmDiagnostics();
     }
 
     private void triggerAlarm() {
@@ -795,6 +814,122 @@ public class LocationTrackingService extends Service {
 
         // Schedule next alarm
         scheduleNextAlarm();
+    }
+
+    private void checkAlarmPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+            if (!alarmManager.canScheduleExactAlarms()) {
+                Log.e(TAG, "⚠️ EXACT ALARM PERMISSION REVOKED!");
+
+                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                        .setSmallIcon(R.drawable.ic_launcher_foreground)
+                        .setContentTitle("⚠️ Critical: Alarms Disabled")
+                        .setContentText("Tap to grant alarm permission again")
+                        .setPriority(NotificationCompat.PRIORITY_MAX)
+                        .setAutoCancel(false)
+                        .setOngoing(true);
+
+                Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
+                PendingIntent pendingIntent = PendingIntent.getActivity(
+                        this, 0, intent, PendingIntent.FLAG_IMMUTABLE
+                );
+                builder.setContentIntent(pendingIntent);
+
+                NotificationManager notificationManager = getSystemService(NotificationManager.class);
+                notificationManager.notify(997, builder.build());
+            }
+        }
+    }
+
+    private void checkBatteryOptimization() {
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        String packageName = getPackageName();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                Log.w(TAG, "⚠️ Battery optimization NOT disabled!");
+
+                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                        .setSmallIcon(R.drawable.ic_launcher_foreground)
+                        .setContentTitle("Action Required")
+                        .setContentText("Please disable battery optimization for alarms to work")
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setAutoCancel(true);
+
+                NotificationManager notificationManager = getSystemService(NotificationManager.class);
+                notificationManager.notify(998, builder.build());
+            }
+        }
+    }
+
+    private void logAlarmDiagnostics() {
+        AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+
+        Log.d(TAG, "=== ALARM DIAGNOSTICS ===");
+        Log.d(TAG, "Android Version: " + Build.VERSION.SDK_INT);
+        Log.d(TAG, "Device: " + Build.MANUFACTURER + " " + Build.MODEL);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Log.d(TAG, "Can schedule exact alarms: " + alarmManager.canScheduleExactAlarms());
+        }
+
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Log.d(TAG, "Battery optimization disabled: " +
+                    pm.isIgnoringBatteryOptimizations(getPackageName()));
+        }
+
+        Intent intent = new Intent(this, AlarmReceiver.class);
+        boolean alarmScheduled = (PendingIntent.getBroadcast(
+                this, 123, intent,
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+        ) != null);
+        Log.d(TAG, "Alarm currently scheduled: " + alarmScheduled);
+
+        Log.d(TAG, "========================");
+    }
+
+    private void saveAlarmDismissed() {
+        String mobileNumber = sessionManager.getMobileNumber();
+        String sessionId = sessionManager.getSessionId();
+
+        if (mobileNumber == null || sessionId == null) return;
+
+        executorService.execute(() -> {
+            try {
+                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
+
+                double lat = lastTrack != null ? lastTrack.getLatitude() : 0.0;
+                double lng = lastTrack != null ? lastTrack.getLongitude() : 0.0;
+                float speed = lastTrack != null ? lastTrack.getSpeed() : 0.0f;
+                float angle = lastTrack != null ? lastTrack.getAngle() : 0.0f;
+
+                DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+
+                LocationTrack track = new LocationTrack(
+                        mobileNumber, lat, lng, speed, angle,
+                        System.currentTimeMillis(), sessionId,
+                        getBatteryLevel(), null, null,
+                        "ALARM_MISS:30",
+                        deviceInfo.getGpsState(), deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(speed), deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(), deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
+                        deviceInfo.getNetworkSignalStrength(),
+                        lastRecNo + 1, 71
+                );
+
+                db.locationTrackDao().insert(track);
+                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=71");
+
+            } catch (Exception e) {
+                Log.e(TAG, "Error saving dismissed alarm: " + e.getMessage());
+            }
+        });
     }
 
     @Override
@@ -813,6 +948,14 @@ public class LocationTrackingService extends Service {
             handler.removeCallbacks(syncRunnable);
         }
 
+        if (healthCheckHandler != null) {
+            healthCheckHandler.removeCallbacksAndMessages(null);
+        }
+
+        if (permissionCheckHandler != null) {
+            permissionCheckHandler.removeCallbacksAndMessages(null);
+        }
+
         if (fusedLocationClient != null && locationCallback != null) {
             fusedLocationClient.removeLocationUpdates(locationCallback);
         }
@@ -826,26 +969,37 @@ public class LocationTrackingService extends Service {
             executorService.shutdown();
         }
 
-        // DON'T cancel alarm - let it persist
-        // Alarm will restart the service when it fires
+        // ✅ DON'T cancel alarm when service is killed - let it persist
+        Log.d(TAG, "Service destroyed - alarms will continue independently");
 
-        Log.d(TAG, "Service stopped - alarm will continue");
+        // ✅ Schedule service restart with higher priority
+        if (sessionManager != null && sessionManager.isLoggedIn()) {
+            Intent restartIntent = new Intent(getApplicationContext(), LocationTrackingService.class);
+            PendingIntent restartPendingIntent = PendingIntent.getService(
+                    getApplicationContext(),
+                    999,
+                    restartIntent,
+                    PendingIntent.FLAG_IMMUTABLE
+            );
 
-        // ✅ Cancel scheduled alarm on logout
-        Intent intent = new Intent(this, AlarmReceiver.class);
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                this,
-                123,
-                intent,
-                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        if (pendingIntent != null) {
             AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-            alarmManager.cancel(pendingIntent);
-            Log.d(TAG, "Alarm cancelled on service destroy");
-        }
 
-        Log.d(TAG, "Service stopped and cleaned up");
+            // Use setExactAndAllowWhileIdle for more reliable restart
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        android.os.SystemClock.elapsedRealtime() + 5000, // 5 seconds delay
+                        restartPendingIntent
+                );
+            } else {
+                alarmManager.set(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        android.os.SystemClock.elapsedRealtime() + 5000,
+                        restartPendingIntent
+                );
+            }
+
+            Log.d(TAG, "Service restart scheduled in 5 seconds");
+        }
     }
 }
