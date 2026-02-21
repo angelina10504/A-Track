@@ -34,7 +34,7 @@ public class ApiService {
        ================================ */
 
     public interface SyncCallback {
-        void onSuccess(int syncedCount, List<Integer> syncedIds);
+        void onSuccess(int syncedCount, List<Integer> syncedRecNos); // ✅ Now RecNos not IDs
         void onFailure(String error);
     }
 
@@ -42,12 +42,9 @@ public class ApiService {
         new Thread(() -> {
             try {
                 List<LocationTrack> unsynced = new ArrayList<>();
-                List<Integer> syncedIds = new ArrayList<>();
-
                 for (LocationTrack t : tracks) {
                     if (t.getSynced() == 0) {
                         unsynced.add(t);
-                        syncedIds.add(t.getId());
                     }
                 }
 
@@ -57,11 +54,10 @@ public class ApiService {
                     return;
                 }
 
-                Log.d(TAG, "📤 Syncing " + unsynced.size() + " unsynced locations");
+                Log.d(TAG, "📤 Syncing " + unsynced.size() + " records");
 
                 URL url = new URL(BASE_URL + "sync_locations.php");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-
                 conn.setRequestMethod("POST");
                 conn.setConnectTimeout(TIMEOUT);
                 conn.setReadTimeout(TIMEOUT);
@@ -74,31 +70,26 @@ public class ApiService {
                 for (LocationTrack t : unsynced) {
                     JSONObject o = new JSONObject();
                     o.put("mobileNumber", t.getMobileNumber());
+                    o.put("sessionId", t.getSessionId());
+                    o.put("RecNo", t.getRecNo());  // ✅ Critical for dedup
                     o.put("nss", t.getNss());
-                    o.put("RecNo",t.getRecNo());
                     o.put("latitude", t.getLatitude());
                     o.put("longitude", t.getLongitude());
                     o.put("speed", t.getSpeed());
                     o.put("angle", t.getAngle());
                     o.put("battery", t.getBattery());
                     o.put("dateTime", t.getDateTime());
-                    o.put("datatype", t.getDatatype());  // ✅ Add datatype
-
+                    o.put("mobileTime", t.getMobileTime());
+                    o.put("datatype", t.getDatatype());
                     if (t.getPhotoPath() != null && !t.getPhotoPath().isEmpty()) {
-                        String photoFileName = new File(t.getPhotoPath()).getName();
-                        o.put("photoPath", photoFileName);
+                        o.put("photoPath", new File(t.getPhotoPath()).getName());
                     }
-
-                    // ✅ UPDATED: Send only filename for videoPath
                     if (t.getVideoPath() != null && !t.getVideoPath().isEmpty()) {
-                        String videoFileName = new File(t.getVideoPath()).getName();
-                        o.put("videoPath", videoFileName);
+                        o.put("videoPath", new File(t.getVideoPath()).getName());
                     }
-
                     if (t.getTextMsg() != null && !t.getTextMsg().isEmpty()) {
                         o.put("textMsg", t.getTextMsg());
                     }
-                    o.put("mobileTime", t.getMobileTime());
                     o.put("gpsState", t.getGpsState());
                     o.put("internetState", t.getInternetState());
                     o.put("flightState", t.getFlightState());
@@ -110,11 +101,8 @@ public class ApiService {
                     o.put("modelOS", t.getModelOS());
                     o.put("apkName", t.getApkName());
                     o.put("imsiNo", t.getImsiNo());
-
                     arr.put(o);
                 }
-
-
 
                 JSONObject payload = new JSONObject();
                 payload.put("locations", arr);
@@ -124,8 +112,6 @@ public class ApiService {
                 conn.getOutputStream().close();
 
                 int code = conn.getResponseCode();
-                Log.d(TAG, "Response code: " + code);
-
                 BufferedReader br = new BufferedReader(new InputStreamReader(
                         code == 200 ? conn.getInputStream() : conn.getErrorStream()
                 ));
@@ -141,23 +127,37 @@ public class ApiService {
                 if (code == 200) {
                     JSONObject res = new JSONObject(responseBody);
                     if (res.optBoolean("success")) {
+                        // ✅ Use server-confirmed RecNos to find matching DB ids
+                        JSONArray recNosArray = res.optJSONArray("syncedRecNos");
+                        List<Integer> confirmedRecNos = new ArrayList<>();
+                        if (recNosArray != null) {
+                            for (int i = 0; i < recNosArray.length(); i++) {
+                                confirmedRecNos.add(recNosArray.getInt(i));
+                            }
+                        }
+
+                        // ✅ Map RecNos back to DB ids
+                        List<Integer> confirmedIds = new ArrayList<>();
+                        for (LocationTrack t : unsynced) {
+                            if (confirmedRecNos.contains(t.getRecNo())) {
+                                confirmedIds.add(t.getId());
+                            }
+                        }
+
                         int synced = res.optInt("synced", 0);
                         int duplicates = res.optInt("duplicates", 0);
-                        Log.d(TAG, "✓ Sync complete: " + synced + " new, " + duplicates + " duplicates");
-                        callback.onSuccess(synced, syncedIds);
+                        Log.d(TAG, "✓ Sync: " + synced + " new, " + duplicates + " duplicates, "
+                                + confirmedIds.size() + " marked synced");
+                        callback.onSuccess(synced, confirmedIds);  // ✅ Only confirmed ids
                     } else {
-                        String msg = res.optString("message", "Unknown error");
-                        Log.e(TAG, "✗ Sync failed: " + msg);
-                        callback.onFailure(msg);
+                        callback.onFailure(res.optString("message", "Unknown error"));
                     }
                 } else {
-                    Log.e(TAG, "✗ HTTP error: " + code);
-                    callback.onFailure("HTTP " + code + ": " + responseBody);
+                    callback.onFailure("HTTP " + code);
                 }
 
             } catch (Exception e) {
                 Log.e(TAG, "✗ Sync exception: " + e.getMessage());
-                e.printStackTrace();
                 callback.onFailure(e.getMessage());
             }
         }).start();

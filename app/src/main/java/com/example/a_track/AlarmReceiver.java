@@ -14,6 +14,8 @@ import android.os.PowerManager;
 import android.os.Vibrator;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+import android.app.ActivityManager;
+import android.content.SharedPreferences;
 
 public class AlarmReceiver extends BroadcastReceiver {
     private static final String TAG = "AlarmReceiver";
@@ -21,7 +23,7 @@ public class AlarmReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        Log.d(TAG, "🚨 Alarm received at: " + new java.util.Date());
+
         // ✅ Handle notification dismissed by swipe
         if ("DISMISS_ALARM".equals(intent.getAction())) {
             Log.d(TAG, "🔕 Notification dismissed by user - stopping vibration");
@@ -31,7 +33,6 @@ public class AlarmReceiver extends BroadcastReceiver {
             vibrator.cancel();
 
             // Save as MISSED since user dismissed without pressing ALL OK
-            // Start a service to save the record
             Intent serviceIntent = new Intent(context, com.example.a_track.service.LocationTrackingService.class);
             serviceIntent.setAction("ALARM_DISMISSED");
             context.startService(serviceIntent);
@@ -40,6 +41,39 @@ public class AlarmReceiver extends BroadcastReceiver {
             return;
         }
 
+        // ✅ Check if service is running, restart if needed
+        if (!isServiceRunning(context, com.example.a_track.service.LocationTrackingService.class)) {
+            Log.w(TAG, "⚠️ Service not running! Restarting...");
+            Intent serviceIntent = new Intent(context, com.example.a_track.service.LocationTrackingService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        // ✅ Log alarm timing
+        long now = System.currentTimeMillis();
+        android.content.SharedPreferences prefs = context.getSharedPreferences("AlarmLogs", Context.MODE_PRIVATE);
+        long lastAlarm = prefs.getLong("lastAlarmTime", 0);
+
+        if (lastAlarm > 0) {
+            long gapMinutes = (now - lastAlarm) / (60 * 1000);
+            Log.d(TAG, "⏱️ Time since last alarm: " + gapMinutes + " minutes");
+
+            if (gapMinutes > 30) {
+                Log.e(TAG, "⚠️ ALARM GAP TOO LONG! Expected 15-25 min, got " + gapMinutes + " min");
+            }
+        }
+
+        prefs.edit().putLong("lastAlarmTime", now).apply();
+
+        Log.d(TAG, "🚨 Alarm received at: " + new java.util.Date());
 
         // Acquire wake lock
         PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
@@ -65,7 +99,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         Intent dialogIntent = new Intent(context, AlarmDialogActivity.class);
         dialogIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
                 Intent.FLAG_ACTIVITY_CLEAR_TOP |
-                Intent.FLAG_ACTIVITY_NO_USER_ACTION);  // ✅ Added for Android 15
+                Intent.FLAG_ACTIVITY_NO_USER_ACTION);
 
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 context,
@@ -73,6 +107,7 @@ public class AlarmReceiver extends BroadcastReceiver {
                 dialogIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
+
         // Intent to stop vibration when notification is swiped away
         Intent dismissIntent = new Intent(context, AlarmReceiver.class);
         dismissIntent.setAction("DISMISS_ALARM");
@@ -101,9 +136,9 @@ public class AlarmReceiver extends BroadcastReceiver {
                 .setSound(alarmSound)
                 .setVibrate(pattern)
                 .setContentIntent(pendingIntent)
-                .setFullScreenIntent(pendingIntent, true)  // This ensures it works on Android 15
+                .setFullScreenIntent(pendingIntent, true)
                 .setDeleteIntent(dismissPendingIntent)
-                .setOngoing(false);  // ✅ Not ongoing so it can be dismissed
+                .setOngoing(false);
 
         NotificationManager notificationManager =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -112,7 +147,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         Log.d(TAG, "Notification shown with sound");
 
         // ✅ For Android 15: Check if we can start activity from background
-        if (Build.VERSION.SDK_INT >= 35) {  // Android 15 (VANILLA_ICE_CREAM)
+        if (Build.VERSION.SDK_INT >= 35) {  // Android 15
             // Android 15+ - rely on full screen intent notification
             Log.d(TAG, "Android 15+ detected - using full screen intent");
         } else {
@@ -154,5 +189,15 @@ public class AlarmReceiver extends BroadcastReceiver {
             NotificationManager manager = context.getSystemService(NotificationManager.class);
             manager.createNotificationChannel(channel);
         }
+    }
+
+    private boolean isServiceRunning(Context context, Class<?> serviceClass) {
+        android.app.ActivityManager manager = (android.app.ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+        for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (serviceClass.getName().equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

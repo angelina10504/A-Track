@@ -46,6 +46,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 
 public class DashboardActivity extends AppCompatActivity implements OnMapReadyCallback {
 
@@ -421,6 +423,29 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     }
 
     private void performLogout() {
+        // ✅ Cancel scheduled alarm
+        Intent alarmIntent = new Intent(this, AlarmReceiver.class);
+        PendingIntent alarmPendingIntent = PendingIntent.getBroadcast(
+                this,
+                123,
+                alarmIntent,
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        if (alarmPendingIntent != null) {
+            android.app.AlarmManager alarmManager = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+            alarmManager.cancel(alarmPendingIntent);
+            Log.d("DashboardActivity", "Alarm cancelled on logout");
+        }
+
+        // ✅ Cancel JobScheduler
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            android.app.job.JobScheduler jobScheduler =
+                    (android.app.job.JobScheduler) getSystemService(JOB_SCHEDULER_SERVICE);
+            jobScheduler.cancel(12345);
+            Log.d("DashboardActivity", "JobScheduler cancelled on logout");
+        }
+
         // Stop location service
         if (serviceBound) {
             unbindService(serviceConnection);
