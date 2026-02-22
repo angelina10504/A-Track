@@ -57,6 +57,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import com.example.a_track.utils.ImageCompressor;
 
+
 public class CameraActivity extends AppCompatActivity {
 
     private static final String TAG = "CameraActivity";
@@ -266,6 +267,7 @@ public class CameraActivity extends AppCompatActivity {
                                 FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
                         )
                 )
+                .setTargetVideoEncodingBitRate(400_000)
                 .build();
 
         videoCapture = VideoCapture.withOutput(recorder);
@@ -424,176 +426,46 @@ public class CameraActivity extends AppCompatActivity {
     }
     private void compressVideo(File originalFile) {
         new Thread(() -> {
-            try {
-                long fileSizeKB = originalFile.length() / 1024;
-                Log.d(TAG, "Original video size: " + fileSizeKB + " KB");
+            long fileSizeKB = originalFile.length() / 1024;
+            Log.d(TAG, "Video size: " + fileSizeKB + " KB");
 
-                if (fileSizeKB <= 1024) {
-                    // Already under 1MB, no compression needed
-                    Log.d(TAG, "✓ Video already under 1MB, skipping compression");
-                    runOnUiThread(() -> {
-                        capturedVideoFile = originalFile;
-                        showVideoPreview(originalFile);
-                        Toast.makeText(this, "Video recorded! (" + fileSizeKB + " KB)",
-                                Toast.LENGTH_SHORT).show();
-                    });
-                    return;
-                }
-
-                // Needs compression
-                Log.d(TAG, "⚙ Compressing video...");
-                runOnUiThread(() ->
-                        Toast.makeText(this, "Compressing video...", Toast.LENGTH_SHORT).show()
-                );
-
-                File compressedFile = new File(originalFile.getParent(),
-                        "compressed_" + originalFile.getName());
-
-                boolean success = transcodeVideo(originalFile, compressedFile);
-
-                runOnUiThread(() -> {
-                    if (success && compressedFile.exists()) {
-                        long compressedKB = compressedFile.length() / 1024;
-                        Log.d(TAG, "✓ Compressed: " + fileSizeKB + " KB → " + compressedKB + " KB");
-
-                        // Delete original, use compressed
-                        originalFile.delete();
-                        capturedVideoFile = compressedFile;
-
-                        showVideoPreview(compressedFile);
-                        Toast.makeText(this,
-                                "Video ready! (" + compressedKB + " KB)",
-                                Toast.LENGTH_SHORT).show();
-                    } else {
-                        // Compression failed, use original anyway
-                        Log.w(TAG, "⚠ Compression failed, using original");
-                        capturedVideoFile = originalFile;
-                        showVideoPreview(originalFile);
-                        Toast.makeText(this,
-                                "Video recorded! (" + fileSizeKB + " KB)",
-                                Toast.LENGTH_SHORT).show();
-                    }
-                });
-
-            } catch (Exception e) {
-                Log.e(TAG, "Compression error: " + e.getMessage());
-                runOnUiThread(() -> showVideoPreview(originalFile));
-            }
+            runOnUiThread(() -> {
+                capturedVideoFile = originalFile;
+                showVideoPreview(originalFile);
+                Toast.makeText(this,
+                        "Video recorded! (" + fileSizeKB + " KB)",
+                        Toast.LENGTH_SHORT).show();
+            });
         }).start();
     }
 
-    private boolean transcodeVideo(File input, File output) {
-        android.media.MediaExtractor extractor = new android.media.MediaExtractor();
-        android.media.MediaMuxer muxer = null;
+    // ✅ Helper: handle successful compression
+    private void handleCompressionSuccess(File originalFile, File tempFile, long originalKB) {
+        long compressedKB = tempFile.exists() ? tempFile.length() / 1024 : 0;
+        Log.d(TAG, "✓ Compressed: " + originalKB + "KB → " + compressedKB + "KB");
 
-        try {
-            extractor.setDataSource(input.getAbsolutePath());
+        originalFile.delete();
+        boolean renamed = tempFile.renameTo(originalFile);
+        File finalFile = renamed ? originalFile : tempFile;
 
-            // Find video and audio tracks
-            int videoTrackIndex = -1;
-            int audioTrackIndex = -1;
-            android.media.MediaFormat videoFormat = null;
-            android.media.MediaFormat audioFormat = null;
+        runOnUiThread(() -> {
+            capturedVideoFile = finalFile;
+            showVideoPreview(finalFile);
+            Toast.makeText(this,
+                    "Video ready! (" + compressedKB + " KB)",
+                    Toast.LENGTH_SHORT).show();
+        });
+    }
 
-            for (int i = 0; i < extractor.getTrackCount(); i++) {
-                android.media.MediaFormat format = extractor.getTrackFormat(i);
-                String mime = format.getString(android.media.MediaFormat.KEY_MIME);
-                if (mime != null && mime.startsWith("video/")) {
-                    videoTrackIndex = i;
-                    videoFormat = format;
-                } else if (mime != null && mime.startsWith("audio/")) {
-                    audioTrackIndex = i;
-                    audioFormat = format;
-                }
-            }
-
-            if (videoTrackIndex == -1) {
-                Log.e(TAG, "No video track found");
-                return false;
-            }
-
-            // ✅ Set target bitrate to keep output under 1MB for 5s video
-            // 1MB = 8Mbits, for 5s = 1.6Mbps max, use 1Mbps to be safe
-            if (videoFormat != null) {
-                videoFormat.setInteger(android.media.MediaFormat.KEY_BIT_RATE, 1000000); // 1 Mbps
-                videoFormat.setInteger(android.media.MediaFormat.KEY_FRAME_RATE, 24);
-                videoFormat.setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL, 1);
-            }
-
-            muxer = new android.media.MediaMuxer(
-                    output.getAbsolutePath(),
-                    android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
-            );
-
-            // Add tracks to muxer
-            int muxerVideoTrack = -1;
-            int muxerAudioTrack = -1;
-
-            if (videoFormat != null) {
-                muxerVideoTrack = muxer.addTrack(videoFormat);
-            }
-            if (audioFormat != null) {
-                muxerAudioTrack = muxer.addTrack(audioFormat);
-            }
-
-            muxer.start();
-
-            // Copy video track
-            if (videoTrackIndex != -1) {
-                extractor.selectTrack(videoTrackIndex);
-                android.media.MediaCodec.BufferInfo bufferInfo = new android.media.MediaCodec.BufferInfo();
-                java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(1024 * 1024);
-
-                while (true) {
-                    int sampleSize = extractor.readSampleData(buffer, 0);
-                    if (sampleSize < 0) break;
-
-                    bufferInfo.offset = 0;
-                    bufferInfo.size = sampleSize;
-                    bufferInfo.presentationTimeUs = extractor.getSampleTime();
-                    bufferInfo.flags = extractor.getSampleFlags();
-
-                    muxer.writeSampleData(muxerVideoTrack, buffer, bufferInfo);
-                    extractor.advance();
-                }
-                extractor.unselectTrack(videoTrackIndex);
-            }
-
-            // Copy audio track
-            if (audioTrackIndex != -1 && muxerAudioTrack != -1) {
-                extractor.selectTrack(audioTrackIndex);
-                android.media.MediaCodec.BufferInfo bufferInfo = new android.media.MediaCodec.BufferInfo();
-                java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(512 * 1024);
-
-                while (true) {
-                    int sampleSize = extractor.readSampleData(buffer, 0);
-                    if (sampleSize < 0) break;
-
-                    bufferInfo.offset = 0;
-                    bufferInfo.size = sampleSize;
-                    bufferInfo.presentationTimeUs = extractor.getSampleTime();
-                    bufferInfo.flags = extractor.getSampleFlags();
-
-                    muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo);
-                    extractor.advance();
-                }
-                extractor.unselectTrack(audioTrackIndex);
-            }
-
-            muxer.stop();
-            Log.d(TAG, "✓ Transcode complete");
-            return true;
-
-        } catch (Exception e) {
-            Log.e(TAG, "Transcode failed: " + e.getMessage());
-            if (output.exists()) output.delete();
-            return false;
-        } finally {
-            extractor.release();
-            if (muxer != null) {
-                try { muxer.release(); } catch (Exception ignored) {}
-            }
-        }
+    // ✅ Helper: handle failed compression
+    private void handleCompressionFailure(File originalFile, long fileSizeKB) {
+        runOnUiThread(() -> {
+            capturedVideoFile = originalFile;
+            showVideoPreview(originalFile);
+            Toast.makeText(this,
+                    "Video recorded! (" + fileSizeKB + " KB)",
+                    Toast.LENGTH_SHORT).show();
+        });
     }
 
     private void stopVideoRecording() {
