@@ -96,7 +96,7 @@ public class CameraActivity extends AppCompatActivity {
     private Handler recordingHandler;
     private Runnable recordingRunnable;
     private int recordingSeconds = 0;
-    private static final int MAX_RECORDING_SECONDS = 5;
+    private static final int MAX_RECORDING_SECONDS = 7;
     private enum CaptureMode { PHOTO, VIDEO, NONE }
     private CaptureMode currentMode = CaptureMode.NONE;
 
