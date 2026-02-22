@@ -392,7 +392,11 @@ public class LocationTrackingService extends Service {
         // Move database operations to background thread
         executorService.execute(() -> {
             try {
-                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    // Fallback to DB on first run or after data clear
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                }
                 int nextRecNo = lastRecNo + 1;
 
                 LocationTrack track = new LocationTrack(
@@ -425,6 +429,7 @@ public class LocationTrackingService extends Service {
                 );
 
                 db.locationTrackDao().insert(track);
+                sessionManager.saveLastRecNo(nextRecNo);
                 lastSavedLocation = new Location(locationToSave);
 
                 // ✅ Log datatype info

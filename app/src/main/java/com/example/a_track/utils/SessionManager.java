@@ -30,6 +30,14 @@ public class SessionManager {
         editor = prefs.edit();
     }
 
+    public int getLastRecNo() {
+        return prefs.getInt("last_rec_no", 0);
+    }
+
+    public void saveLastRecNo(int recNo) {
+        prefs.edit().putInt("last_rec_no", recNo).apply();
+    }
+
     public void createLoginSession(String mobileNumber, String sessionId, int sessionDbId) {
         // Get current boot time
         long currentBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
