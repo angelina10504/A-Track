@@ -46,10 +46,8 @@ public class AlarmDialogActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        if (savedInstanceState != null) {
-            finish();
-            return;
-        }
+        // No-op: removed the erroneous finish() on recreation.
+        // Activity recreated on rotation should continue normally.
 
         // ✅ Modern way to handle lock screen for Android 8.0+ (API 27+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -139,6 +137,9 @@ public class AlarmDialogActivity extends AppCompatActivity {
 
         long responseTime = (System.currentTimeMillis() - startTime) / 1000;
 
+        // Cancel the 30s safety-net timeout so it doesn't double-fire as missed
+        AlarmReceiver.cancelAlarmTimeout(this);
+
         stopAlarm();
 
         // ✅ Dismiss notification
@@ -155,6 +156,9 @@ public class AlarmDialogActivity extends AppCompatActivity {
     }
 
     private void handleTimeout() {
+        // Cancel the 30s safety-net timeout so it doesn't double-fire as missed
+        AlarmReceiver.cancelAlarmTimeout(this);
+
         stopAlarm();
         saveAlarmRecord(71, 30); // datatype 71 = missed
         rescheduleNextAlarm();
