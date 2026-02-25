@@ -48,6 +48,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
+import android.net.Uri;
+import android.provider.Settings;
 
 public class DashboardActivity extends AppCompatActivity implements OnMapReadyCallback {
 
@@ -335,13 +337,33 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     }
 
     private void startLocationService() {
+        checkExactAlarmPermission();
         Intent serviceIntent = new Intent(this, LocationTrackingService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent);
-        } else {
-            startService(serviceIntent);
-        }
+        startForegroundService(serviceIntent);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    /**
+     * On Android 12 (API 31) and 13 (API 32), SCHEDULE_EXACT_ALARM is NOT auto-granted.
+     * The user must manually allow it. Without it, alarms fall back to setWindow() which
+     * can be delayed by the system. Prompt once so users are aware.
+     */
+    private void checkExactAlarmPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+            if (!alarmManager.canScheduleExactAlarms()) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Enable Exact Alarms")
+                        .setMessage("A-Track needs permission to schedule exact safety check alarms. Without it, alarms may be delayed.\n\nPlease tap \"Allow\" on the next screen.")
+                        .setPositiveButton("Open Settings", (dialog, which) -> {
+                            Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
+                            intent.setData(Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                        })
+                        .setNegativeButton("Later", null)
+                        .show();
+            }
+        }
     }
 
     private void startLocationUpdates() {
@@ -423,22 +445,31 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     }
 
     private void performLogout() {
-        // ✅ Cancel scheduled alarm
+        android.app.AlarmManager alarmManager = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+
+        // Cancel safety alarm (scheduled by LocationTrackingService, request code 123)
         Intent alarmIntent = new Intent(this, AlarmReceiver.class);
         PendingIntent alarmPendingIntent = PendingIntent.getBroadcast(
-                this,
-                123,
-                alarmIntent,
+                this, 123, alarmIntent,
                 PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
         );
-
         if (alarmPendingIntent != null) {
-            android.app.AlarmManager alarmManager = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
             alarmManager.cancel(alarmPendingIntent);
-            Log.d("DashboardActivity", "Alarm cancelled on logout");
+            Log.d("DashboardActivity", "Safety alarm cancelled on logout");
         }
 
-        // ✅ Cancel JobScheduler
+        // Cancel service restart alarm (scheduled by onDestroy(), request code 999)
+        Intent restartIntent = new Intent(this, LocationTrackingService.class);
+        PendingIntent restartPendingIntent = PendingIntent.getService(
+                this, 999, restartIntent,
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+        );
+        if (restartPendingIntent != null) {
+            alarmManager.cancel(restartPendingIntent);
+            Log.d("DashboardActivity", "Service restart alarm cancelled on logout");
+        }
+
+        // Cancel JobScheduler
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             android.app.job.JobScheduler jobScheduler =
                     (android.app.job.JobScheduler) getSystemService(JOB_SCHEDULER_SERVICE);
@@ -446,32 +477,30 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             Log.d("DashboardActivity", "JobScheduler cancelled on logout");
         }
 
+        // ✅ FIX: Logout BEFORE stopping service so that onDestroy() sees isLoggedIn() == false
+        // and does NOT schedule a service restart alarm.
+        int sessionDbId = sessionManager.getSessionDbId();
+        sessionManager.logout();
+
         // Stop location service
         if (serviceBound) {
             unbindService(serviceConnection);
             serviceBound = false;
         }
-        Intent serviceIntent = new Intent(this, LocationTrackingService.class);
-        stopService(serviceIntent);
+        stopService(new Intent(this, LocationTrackingService.class));
 
         // Stop UI updates
         if (handler != null && updateRunnable != null) {
             handler.removeCallbacks(updateRunnable);
         }
 
-        // Clear displayed data (but keep in database)
         clearDisplayedData();
 
-        // Update session logout time in database
-        int sessionDbId = sessionManager.getSessionDbId();
+        // Update session logout time in database, then navigate to login
         executorService.execute(() -> {
             db.sessionDao().updateLogoutTime(sessionDbId, System.currentTimeMillis());
 
             runOnUiThread(() -> {
-                // Clear session from SharedPreferences
-                sessionManager.logout();
-
-                // Navigate to login screen
                 Intent intent = new Intent(DashboardActivity.this, LoginActivity.class);
                 intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                 startActivity(intent);

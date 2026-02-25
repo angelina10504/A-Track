@@ -62,6 +62,7 @@ public class LocationTrackingService extends Service {
     private static final String CHANNEL_ID = "LocationTrackingChannel";
     private static final int NOTIFICATION_ID = 1;
     private static final long UPDATE_INTERVAL = 60000; // 1 minute
+    public static boolean isRunning = false;
     private static final long SYNC_INTERVAL = 120000; // 2 minutes
 
     // ✅ Datatype constants
@@ -110,6 +111,7 @@ public class LocationTrackingService extends Service {
     public void onCreate() {
         super.onCreate();
 
+        isRunning = true;
         Log.d(TAG, "Service onCreate - Initializing location tracking");
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
@@ -117,11 +119,12 @@ public class LocationTrackingService extends Service {
         sessionManager = new SessionManager(this);
         executorService = Executors.newSingleThreadExecutor();
         handler = new Handler(Looper.getMainLooper());
+        random = new Random(); // must be initialized before startPeriodicSync()
 
         // Acquire wake lock
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ROU Track::LocationWakeLock");
-        wakeLock.acquire();
+        wakeLock.acquire(10 * 60 * 1000L); // 10-minute timeout
 
         Log.d(TAG, "WakeLock acquired - Service will run in sleep mode");
 
@@ -133,8 +136,6 @@ public class LocationTrackingService extends Service {
         startPeriodicLocationFetch();
         startPeriodicSync();
 
-        // Initialize alarm
-        random = new Random();
         scheduleNextAlarm();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -292,11 +293,17 @@ public class LocationTrackingService extends Service {
                 } else {
                     Log.d(TAG, "No internet - skipping sync");
                 }
-                handler.postDelayed(this, SYNC_INTERVAL);
+                // Jitter: ±30s so all phones don't hit the server at the same time
+                long jitter = random.nextInt(60001) - 30000;
+                long nextInterval = SYNC_INTERVAL + jitter;
+                Log.d(TAG, "Next sync in " + (nextInterval / 1000) + "s");
+                handler.postDelayed(this, nextInterval);
             }
         };
-        handler.postDelayed(syncRunnable, SYNC_INTERVAL);
-        Log.d(TAG, "Periodic sync started (every 2 minutes)");
+        // Jitter on first sync too
+        long initialJitter = random.nextInt(60001) - 30000;
+        handler.postDelayed(syncRunnable, SYNC_INTERVAL + initialJitter);
+        Log.d(TAG, "Periodic sync started (every ~2 minutes with jitter)");
     }
 
     private boolean isNetworkAvailable() {
@@ -564,15 +571,14 @@ public class LocationTrackingService extends Service {
         ApiService.syncLocations(batch, new ApiService.SyncCallback() {
             @Override
             public void onSuccess(int syncedCount, List<Integer> confirmedIds) {
-                executorService.execute(() -> {
-                    if (!confirmedIds.isEmpty()) {
-                        // ✅ Only mark server-confirmed records as synced
-                        db.locationTrackDao().markAsSynced(confirmedIds);
-                        Log.d(TAG, "✓ Marked " + confirmedIds.size() + " records as synced");
-                    }
-                    success[0] = true;
-                    latch.countDown();
-                });
+                // DB work runs on the API thread (not executorService) to avoid deadlock:
+                // executorService is a single thread already blocked on latch.await()
+                if (!confirmedIds.isEmpty()) {
+                    db.locationTrackDao().markAsSynced(confirmedIds);
+                    Log.d(TAG, "✓ Marked " + confirmedIds.size() + " records as synced");
+                }
+                success[0] = true;
+                latch.countDown();
             }
 
             @Override
@@ -773,6 +779,11 @@ public class LocationTrackingService extends Service {
     }
 
     private void scheduleNextAlarm() {
+        if (!sessionManager.isLoggedIn()) {
+            Log.d(TAG, "⏰ Not scheduling alarm - no user logged in");
+            return;
+        }
+
         int randomInterval = MIN_ALARM_INTERVAL +
                 random.nextInt(MAX_ALARM_INTERVAL - MIN_ALARM_INTERVAL);
 
@@ -793,17 +804,18 @@ public class LocationTrackingService extends Service {
 
         AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (alarmManager.canScheduleExactAlarms()) {
-                Log.d(TAG, "✓ Can schedule exact alarms");
-            } else {
-                Log.e(TAG, "✗ CANNOT schedule exact alarms!");
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+            Log.e(TAG, "✗ CANNOT schedule exact alarms - using setWindow() fallback");
+            // Fallback: window-based alarm (within 5 min window, still fires in Doze)
+            alarmManager.setWindow(
+                    AlarmManager.RTC_WAKEUP, triggerTime, 5 * 60 * 1000, pendingIntent
+            );
+        } else {
+            alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
+            );
+            Log.d(TAG, "✓ Exact alarm scheduled");
         }
-
-        alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-        );
 
         Log.d(TAG, "✓ Alarm scheduled via BroadcastReceiver");
         logAlarmDiagnostics();
@@ -941,6 +953,7 @@ public class LocationTrackingService extends Service {
     public void onDestroy() {
         super.onDestroy();
 
+        isRunning = false;
         Log.d(TAG, "Service onDestroy - Stopping location tracking");
 
         hasLoggedInstallReboot = false;
