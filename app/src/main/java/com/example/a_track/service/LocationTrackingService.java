@@ -99,6 +99,7 @@ public class LocationTrackingService extends Service {
     // ✅ Track if we've already logged install/reboot for this session
     private boolean hasLoggedInstallReboot = false;
 
+
     private final IBinder binder = new LocalBinder();
 
     public class LocalBinder extends Binder {
@@ -908,6 +909,13 @@ public class LocationTrackingService extends Service {
     }
 
     private void saveAlarmDismissed() {
+        android.content.SharedPreferences prefs = getSharedPreferences("AlarmGuard", MODE_PRIVATE);
+        if (prefs.getBoolean("alarm_missed_saved", false)) {
+            Log.d(TAG, "⚠️ Flag 71 already saved for this alarm cycle - skipping duplicate");
+            return;
+        }
+        prefs.edit().putBoolean("alarm_missed_saved", true).apply();
+
         String mobileNumber = sessionManager.getMobileNumber();
         String sessionId = sessionManager.getSessionId();
 

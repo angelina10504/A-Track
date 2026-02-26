@@ -160,7 +160,15 @@ public class AlarmDialogActivity extends AppCompatActivity {
         AlarmReceiver.cancelAlarmTimeout(this);
 
         stopAlarm();
-        saveAlarmRecord(71, 30); // datatype 71 = missed
+
+        android.content.SharedPreferences prefs = getSharedPreferences("AlarmGuard", MODE_PRIVATE);
+        if (!prefs.getBoolean("alarm_missed_saved", false)) {
+            prefs.edit().putBoolean("alarm_missed_saved", true).apply();
+            saveAlarmRecord(71, 30); // datatype 71 = missed
+        } else {
+            Log.d(TAG, "⚠️ Flag 71 already saved for this alarm cycle - skipping duplicate");
+        }
+
         rescheduleNextAlarm();
         // ✅ Dismiss notification
         NotificationManager notificationManager =
