@@ -11,7 +11,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@color/material_dynamic_primary30"
+        android:background="#373434"
         android:padding="16dp">
 
         <TextView
@@ -54,7 +54,8 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:orientation="vertical">
+                    android:orientation="vertical"
+                    android:background="#FAFAFA">
 
                     <TextView
                         android:layout_width="wrap_content"
@@ -84,7 +85,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:padding="16dp"
+                    android:background="#FFFFFF">
 
                     <TextView
                         android:layout_width="wrap_content"
@@ -108,7 +110,8 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="Lat: --"
-                            android:textSize="13sp"/>
+                            android:textSize="13sp"
+                            android:textColor="@android:color/black"/>
 
                         <TextView
                             android:id="@+id/tvLongitude"
@@ -116,7 +119,8 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="Long: --"
-                            android:textSize="13sp"/>
+                            android:textSize="13sp"
+                            android:textColor="@android:color/black"/>
                     </LinearLayout>
 
                     <!-- Line 2: Speed, DateTime -->
@@ -131,7 +135,8 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="DtTime: --"
-                            android:textSize="13sp" />
+                            android:textSize="13sp"
+                            android:textColor="@color/black"/>
 
                         <TextView
                             android:id="@+id/tvSpeed"
@@ -139,7 +144,8 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="Spd: --"
-                            android:textSize="13sp"/>
+                            android:textSize="13sp"
+                            android:textColor="@color/black"/>
                     </LinearLayout>
 
                     <!-- Hidden Angle TextView (keep for compatibility) -->
@@ -156,28 +162,34 @@
                 android:id="@+id/btnTakePhoto"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="📷 Camera"
+                android:text="📷 camera"
                 android:layout_marginBottom="8dp"
-                android:backgroundTint="@color/material_dynamic_primary30"/>
+                android:backgroundTint="#2C2831"
+                android:textColor="@color/white"/>
             <Button
                 android:id="@+id/btnFilterLocation"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Filter Location Records"
-                android:layout_marginBottom="8dp"/>
+                android:layout_marginBottom="8dp"
+                android:textColor="@color/white"
+                android:backgroundTint="#6137AD"/>
 
             <Button
                 android:id="@+id/btnFilterSession"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Filter Session Records"
-                android:layout_marginBottom="8dp"/>
+                android:layout_marginBottom="8dp"
+                android:textColor="@color/white"
+                android:backgroundTint="#6137AD"/>
 
             <Button
                 android:id="@+id/btnLogout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Logout"
+                android:textColor="@color/white"
                 android:backgroundTint="@android:color/holo_red_dark"/>
 
         </LinearLayout>

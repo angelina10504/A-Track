@@ -140,6 +140,10 @@ public class AlarmDialogActivity extends AppCompatActivity {
         // Cancel the 30s safety-net timeout so it doesn't double-fire as missed
         AlarmReceiver.cancelAlarmTimeout(this);
 
+        // ✅ Block service from saving 71 if ALARM_DISMISSED races in after this point
+        getSharedPreferences("AlarmGuard", MODE_PRIVATE)
+                .edit().putBoolean("alarm_missed_saved", true).apply();
+
         stopAlarm();
 
         // ✅ Dismiss notification
