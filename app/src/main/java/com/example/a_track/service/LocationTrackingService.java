@@ -29,8 +29,8 @@ import androidx.core.app.NotificationCompat;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import com.example.a_track.AlarmDialogActivity;
-import com.example.a_track.AlarmJobService;
 import com.example.a_track.AlarmReceiver;
+import com.example.a_track.DataTypes;
 import com.example.a_track.DashboardActivity;
 import com.example.a_track.R;
 import com.example.a_track.database.AppDatabase;
@@ -44,9 +44,10 @@ import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
-import android.app.job.JobInfo;
-import android.app.job.JobScheduler;
-import android.content.ComponentName;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
+import com.example.a_track.workers.ServiceWatchdogWorker;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -65,13 +66,13 @@ public class LocationTrackingService extends Service {
     public static boolean isRunning = false;
     private static final long SYNC_INTERVAL = 120000; // 2 minutes
 
-    // ✅ Datatype constants
-    private static final int DATATYPE_INSTALL = 0;
-    private static final int DATATYPE_REBOOT = 1;
-    private static final int DATATYPE_NORMAL = 2;
-    private static final int DATATYPE_MOCK = 8;
-    private static final int DATATYPE_PHOTO = 50;  // ✅ NEW
-    private static final int DATATYPE_VIDEO = 60;  // ✅ NEW
+    // Datatype constants — single source of truth in DataTypes.java
+    private static final int DATATYPE_INSTALL = DataTypes.INSTALL;
+    private static final int DATATYPE_REBOOT  = DataTypes.REBOOT;
+    private static final int DATATYPE_NORMAL  = DataTypes.NORMAL;
+    private static final int DATATYPE_MOCK    = DataTypes.MOCK;
+    private static final int DATATYPE_PHOTO   = DataTypes.PHOTO;
+    private static final int DATATYPE_VIDEO   = DataTypes.VIDEO;
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
@@ -99,6 +100,7 @@ public class LocationTrackingService extends Service {
     // ✅ Track if we've already logged install/reboot for this session
     private boolean hasLoggedInstallReboot = false;
 
+
     private final IBinder binder = new LocalBinder();
 
     public class LocalBinder extends Binder {
@@ -112,7 +114,10 @@ public class LocationTrackingService extends Service {
         super.onCreate();
 
         isRunning = true;
-        Log.d(TAG, "Service onCreate - Initializing location tracking");
+        Log.d(TAG, "─── onCreate() entered ───");
+        Log.d(TAG, "Package: " + getPackageName());
+        Log.d(TAG, "Android API level: " + Build.VERSION.SDK_INT);
+        Log.d(TAG, "Process ID: " + android.os.Process.myPid());
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         db = AppDatabase.getInstance(this);
@@ -137,21 +142,7 @@ public class LocationTrackingService extends Service {
         startPeriodicSync();
 
         scheduleNextAlarm();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            JobScheduler jobScheduler = (JobScheduler) getSystemService(JOB_SCHEDULER_SERVICE);
-            ComponentName componentName = new ComponentName(this, AlarmJobService.class);
-
-            JobInfo jobInfo = new JobInfo.Builder(12345, componentName)
-                    .setPeriodic(15 * 60 * 1000) // Every 15 minutes
-                    .setPersisted(true) // Survive reboot
-                    .setRequiresCharging(false)
-                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_NONE)
-                    .build();
-
-            jobScheduler.schedule(jobInfo);
-            Log.d(TAG, "JobScheduler backup alarm scheduled");
-        }
+        scheduleWatchdog();
 
         checkAlarmPermission();
         checkBatteryOptimization();
@@ -192,8 +183,7 @@ public class LocationTrackingService extends Service {
         permissionCheckHandler.postDelayed(permissionCheckRunnable, 30 * 60 * 1000);
 
         Log.d(TAG, "Alarm system initialized");
-
-        Log.d(TAG, "Service started successfully");
+        Log.d(TAG, "─── onCreate() complete — service is running ───");
     }
 
     private void createNotificationChannel() {
@@ -476,10 +466,9 @@ public class LocationTrackingService extends Service {
                 return DATATYPE_INSTALL;
             }
 
-            // Check for device reboot
+            // Check for device reboot — hasDeviceRebooted() self-resets on first true
             if (sessionManager.hasDeviceRebooted()) {
-                Log.i(TAG, "🔑 NEW LOGIN DETECTED - datatype = 1");
-                sessionManager.markLoginLogged();
+                Log.i(TAG, "🔑 REBOOT DETECTED - datatype = 1");
                 hasLoggedInstallReboot = true;
                 return DATATYPE_REBOOT;
             }
@@ -497,13 +486,15 @@ public class LocationTrackingService extends Service {
      */
     private String getDatatypeString(int datatype) {
         switch (datatype) {
-            case DATATYPE_INSTALL: return "Install";
-            case DATATYPE_REBOOT: return "Reboot";
-            case DATATYPE_NORMAL: return "Normal";
-            case DATATYPE_MOCK: return "Mock Location";
-            case DATATYPE_PHOTO: return "Photo";      // ✅ NEW
-            case DATATYPE_VIDEO: return "Video";      // ✅ NEW
-            default: return "Unknown";
+            case DataTypes.INSTALL:      return "Install";
+            case DataTypes.REBOOT:       return "Reboot";
+            case DataTypes.NORMAL:       return "Normal";
+            case DataTypes.MOCK:         return "Mock Location";
+            case DataTypes.PHOTO:        return "Photo";
+            case DataTypes.VIDEO:        return "Video";
+            case DataTypes.ALARM_ACK:    return "Alarm Acknowledged";
+            case DataTypes.ALARM_MISSED: return "Alarm Missed";
+            default:                     return "Unknown";
         }
     }
 
@@ -759,10 +750,13 @@ public class LocationTrackingService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.d(TAG, "Service onStartCommand");
+        Log.d(TAG, "─── onStartCommand() entered ───");
+        Log.d(TAG, "flags=" + flags + ", startId=" + startId);
+        Log.d(TAG, "intent=" + (intent != null ? intent.toString() : "null"));
 
         if (intent != null) {
             String action = intent.getAction();
+            Log.d(TAG, "action=" + (action != null ? action : "null (normal start)"));
 
             if ("RESCHEDULE_ALARM".equals(action)) {
                 Log.d(TAG, "⏰ Rescheduling next alarm after user response");
@@ -773,9 +767,28 @@ public class LocationTrackingService extends Service {
                 saveAlarmDismissed();
                 scheduleNextAlarm();
             }
+        } else {
+            Log.d(TAG, "intent is null — service restarted by OS (START_STICKY)");
         }
 
+        Log.d(TAG, "─── onStartCommand() returning START_STICKY ───");
         return START_STICKY;
+    }
+
+    // ─── Layer 3: WorkManager Watchdog ──────────────────────────────────────────
+    private void scheduleWatchdog() {
+        PeriodicWorkRequest watchdogWork = new PeriodicWorkRequest.Builder(
+                ServiceWatchdogWorker.class,
+                15, TimeUnit.MINUTES
+        ).build();
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                ServiceWatchdogWorker.WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                watchdogWork
+        );
+
+        Log.d(TAG, "✓ WorkManager watchdog scheduled (every 15 min)");
     }
 
     private void scheduleNextAlarm() {
@@ -908,6 +921,13 @@ public class LocationTrackingService extends Service {
     }
 
     private void saveAlarmDismissed() {
+        android.content.SharedPreferences prefs = getSharedPreferences("AlarmGuard", MODE_PRIVATE);
+        if (prefs.getBoolean("alarm_missed_saved", false)) {
+            Log.d(TAG, "⚠️ Flag 71 already saved for this alarm cycle - skipping duplicate");
+            return;
+        }
+        prefs.edit().putBoolean("alarm_missed_saved", true).apply();
+
         String mobileNumber = sessionManager.getMobileNumber();
         String sessionId = sessionManager.getSessionId();
 
@@ -937,11 +957,11 @@ public class LocationTrackingService extends Service {
                         deviceInfo.getModelOS(), deviceInfo.getApkName(),
                         deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
                         deviceInfo.getNetworkSignalStrength(),
-                        lastRecNo + 1, 71
+                        lastRecNo + 1, DataTypes.ALARM_MISSED
                 );
 
                 db.locationTrackDao().insert(track);
-                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=71");
+                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=" + DataTypes.ALARM_MISSED);
 
             } catch (Exception e) {
                 Log.e(TAG, "Error saving dismissed alarm: " + e.getMessage());

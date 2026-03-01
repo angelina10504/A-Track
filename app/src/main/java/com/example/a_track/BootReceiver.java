@@ -1,14 +1,17 @@
+// TEST: adb shell am broadcast -a android.intent.action.BOOT_COMPLETED -p com.example.a_track
 package com.example.a_track;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.util.Log;
-import com.example.a_track.database.AppDatabase;
-import com.example.a_track.service.LocationTrackingService;
+
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
+
 import com.example.a_track.utils.SessionManager;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import com.example.a_track.workers.ServiceStartWorker;
 
 public class BootReceiver extends BroadcastReceiver {
 
@@ -16,51 +19,53 @@ public class BootReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        Log.d(TAG, "─── onReceive() entered ───");
+
         String action = intent.getAction();
+        Log.d(TAG, "Action received: " + action);
+        Log.d(TAG, "Android API level: " + Build.VERSION.SDK_INT);
 
-        if (action == null) return;
+        if (action == null) {
+            Log.w(TAG, "Action is null - ignoring");
+            return;
+        }
 
-        Log.d(TAG, "Received action: " + action);
+        // Shutdown/reboot about to happen — session is kept alive for auto-resume
+        if (Intent.ACTION_SHUTDOWN.equals(action) ||
+                "android.intent.action.REBOOT".equals(action)) {
+            Log.d(TAG, "Device shutting down - session preserved for auto-resume");
+            return;
+        }
 
+        // BOOT_COMPLETED or QUICKBOOT_POWERON
+        Log.d(TAG, "Boot action detected - checking session...");
         SessionManager sessionManager = new SessionManager(context);
 
-        // Check if user was logged in
-        if (sessionManager.isLoggedIn()) {
-            Log.d(TAG, "Active session found - terminating session");
+        boolean loggedIn = sessionManager.isLoggedIn();
+        String mobile = sessionManager.getMobileNumber();
+        Log.d(TAG, "isLoggedIn() = " + loggedIn);
+        Log.d(TAG, "mobileNumber = " + (mobile != null ? mobile : "null"));
 
-            int sessionDbId = sessionManager.getSessionDbId();
+        if (loggedIn) {
+            Log.d(TAG, "Active session found - calling onDeviceReboot()");
+            sessionManager.onDeviceReboot();
+            Log.d(TAG, "onDeviceReboot() complete");
 
-            // Stop location tracking service if running
+            // On Android 12+ startForegroundService() is blocked from BroadcastReceiver
+            // in background. Delegate to WorkManager which runs in an allowed context.
+            Log.d(TAG, "Enqueueing ServiceStartWorker via WorkManager...");
             try {
-                Intent serviceIntent = new Intent(context, LocationTrackingService.class);
-                context.stopService(serviceIntent);
-                Log.d(TAG, "Location tracking service stopped");
+                OneTimeWorkRequest startWork =
+                        new OneTimeWorkRequest.Builder(ServiceStartWorker.class).build();
+                WorkManager.getInstance(context).enqueue(startWork);
+                Log.d(TAG, "✓ ServiceStartWorker enqueued successfully - id: " + startWork.getId());
             } catch (Exception e) {
-                Log.e(TAG, "Error stopping service: " + e.getMessage());
+                Log.e(TAG, "✗ Failed to enqueue ServiceStartWorker: " + e.getMessage(), e);
             }
-
-            // Update logout time in database
-            if (sessionDbId != -1) {
-                AppDatabase db = AppDatabase.getInstance(context);
-                ExecutorService executor = Executors.newSingleThreadExecutor();
-
-                executor.execute(() -> {
-                    try {
-                        db.sessionDao().updateLogoutTime(sessionDbId, System.currentTimeMillis());
-                        Log.d(TAG, "Session terminated - logout time updated for session ID: " + sessionDbId);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error updating session: " + e.getMessage());
-                    } finally {
-                        executor.shutdown();
-                    }
-                });
-            }
-
-            // Clear session - user must login again
-            sessionManager.logout();
-            Log.d(TAG, "User logged out - credentials required on next app launch");
         } else {
-            Log.d(TAG, "No active session found");
+            Log.d(TAG, "No active session - nothing to resume");
         }
+
+        Log.d(TAG, "─── onReceive() complete ───");
     }
 }

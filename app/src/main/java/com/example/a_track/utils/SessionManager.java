@@ -38,6 +38,7 @@ public class SessionManager {
         prefs.edit().putInt("last_rec_no", recNo).apply();
     }
 
+
     public void createLoginSession(String mobileNumber, String sessionId, int sessionDbId) {
         // Get current boot time
         long currentBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
@@ -47,8 +48,6 @@ public class SessionManager {
         editor.putString(KEY_SESSION_ID, sessionId);
         editor.putInt(KEY_SESSION_DB_ID, sessionDbId);
         editor.putLong(KEY_LAST_BOOT_TIME, currentBootTime);
-        editor.commit();
-
         editor.putBoolean(KEY_LOGIN_LOGGED, false);
         editor.commit();
 
@@ -127,22 +126,30 @@ public class SessionManager {
         editor.commit();
     }
 
-    // ✅ Check if device has rebooted since last check
+    // Returns true exactly once after a reboot or new login, then resets itself.
+    // Self-resetting: consumes the flag on first true so no subsequent call ever
+    // returns true again — even if the service restarts before the next location save.
     public boolean hasDeviceRebooted() {
         boolean loginLogged = prefs.getBoolean(KEY_LOGIN_LOGGED, false);
 
         if (!loginLogged) {
-            Log.d(TAG, "🔑 NEW LOGIN detected - will log datatype=1");
+            editor.putBoolean(KEY_LOGIN_LOGGED, true);
+            editor.commit();
+            Log.d(TAG, "🔑 Reboot/login detected - datatype=1 will be logged (flag consumed)");
             return true;
         }
 
         return false;
     }
 
-    public void markLoginLogged() {
-        Log.d(TAG, "✓ Marking login as logged");
-        editor.putBoolean(KEY_LOGIN_LOGGED, true);
+    // Called by BootReceiver after reboot — keeps session alive but marks it
+    // so the service will log a datatype=1 (reboot) entry on first location save.
+    public void onDeviceReboot() {
+        long newBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+        editor.putBoolean(KEY_LOGIN_LOGGED, false);
+        editor.putLong(KEY_LAST_BOOT_TIME, newBootTime);
         editor.commit();
+        Log.d(TAG, "Device reboot detected - login flag reset, boot time updated");
     }
 
     public void logout() {
