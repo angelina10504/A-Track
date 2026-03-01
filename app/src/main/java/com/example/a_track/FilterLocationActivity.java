@@ -206,7 +206,7 @@ public class FilterLocationActivity extends AppCompatActivity {
 
 
     private void sendEmailWithCsv() {
-        String recipientEmail = "tswakde@gmail.com"; // Change this to your email
+        String recipientEmail = "routrackemailreceiver@gmail.com";
 
         if (currentFilteredTracks == null || currentFilteredTracks.isEmpty()) {
             Toast.makeText(this, "No data to send. Please apply filter first.", Toast.LENGTH_SHORT).show();

@@ -232,7 +232,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             mMap.getUiSettings().setCompassEnabled(true);
 
             // Set default location (will be updated with actual location)
-            LatLng defaultLocation = new LatLng(21.1702, 72.8311); // Surat coordinates
+            LatLng defaultLocation = new LatLng(18.5526051, 73.7697251);
             mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(defaultLocation, 15));
 
             Log.d("DashboardActivity", "Map initialized successfully");
