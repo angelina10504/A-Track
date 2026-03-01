@@ -151,7 +151,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         notificationManager.cancel(999);
 
-        saveAlarmRecord(70, (int) responseTime);
+        saveAlarmRecord(DataTypes.ALARM_ACK, (int) responseTime);
         rescheduleNextAlarm();
 
         Toast.makeText(this, "Response recorded: " + responseTime + "s", Toast.LENGTH_SHORT).show();
@@ -168,7 +168,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
         android.content.SharedPreferences prefs = getSharedPreferences("AlarmGuard", MODE_PRIVATE);
         if (!prefs.getBoolean("alarm_missed_saved", false)) {
             prefs.edit().putBoolean("alarm_missed_saved", true).apply();
-            saveAlarmRecord(71, 30); // datatype 71 = missed
+            saveAlarmRecord(DataTypes.ALARM_MISSED, 30);
         } else {
             Log.d(TAG, "⚠️ Flag 71 already saved for this alarm cycle - skipping duplicate");
         }
@@ -239,7 +239,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
                 int nextRecNo = lastRecNo + 1;
 
-                String textMsg = (datatype == 70) ?
+                String textMsg = (datatype == DataTypes.ALARM_ACK) ?
                         "ALARM_ACK:" + responseTime :
                         "ALARM_MISS:" + responseTime;
 

@@ -654,7 +654,7 @@ public class CameraActivity extends AppCompatActivity {
                         mobileTime,
                         nss,
                         nextRecNo,
-                        50
+                        DataTypes.PHOTO
                 );
 
                 // Save to local database
@@ -747,7 +747,7 @@ public class CameraActivity extends AppCompatActivity {
                         mobileTime,
                         nss,
                         nextRecNo,
-                        60  // datatype = 60 for VIDEO
+                        DataTypes.VIDEO
                 );
 
                 // Save to local database

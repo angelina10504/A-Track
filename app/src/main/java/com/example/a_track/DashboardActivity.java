@@ -26,6 +26,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import com.example.a_track.adapter.TrackAdapter;
 import com.example.a_track.database.AppDatabase;
+import com.example.a_track.workers.ServiceWatchdogWorker;
 import com.example.a_track.database.LocationTrack;
 import com.example.a_track.service.LocationTrackingService;
 import com.example.a_track.utils.SessionManager;
@@ -50,6 +51,10 @@ import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.net.Uri;
 import android.provider.Settings;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
+import java.util.concurrent.TimeUnit;
 
 public class DashboardActivity extends AppCompatActivity implements OnMapReadyCallback {
 
@@ -341,6 +346,22 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         Intent serviceIntent = new Intent(this, LocationTrackingService.class);
         startForegroundService(serviceIntent);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+        scheduleWatchdog();
+    }
+
+    private void scheduleWatchdog() {
+        PeriodicWorkRequest watchdogWork = new PeriodicWorkRequest.Builder(
+                ServiceWatchdogWorker.class,
+                15, TimeUnit.MINUTES
+        ).build();
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                ServiceWatchdogWorker.WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                watchdogWork
+        );
+
+        Log.d("DashboardActivity", "✓ ServiceWatchdogWorker scheduled (every 15 min)");
     }
 
     /**
