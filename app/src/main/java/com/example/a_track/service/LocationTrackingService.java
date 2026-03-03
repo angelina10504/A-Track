@@ -10,6 +10,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.BatteryManager;
@@ -91,6 +93,7 @@ public class LocationTrackingService extends Service {
     private PowerManager.WakeLock wakeLock;
     private Location lastSavedLocation;
     private Location stationaryBaseLocation;
+    private LocationListener gpsTimeListener;
     private int stationaryCount = 0;
     private static final float STATIONARY_THRESHOLD = 5.0f;
     private static final float MIN_SPEED = 0.5f;
@@ -136,10 +139,18 @@ public class LocationTrackingService extends Service {
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, createNotification());
 
-        setupLocationCallback();
-        startLocationUpdates();
-        startPeriodicLocationFetch();
-        startPeriodicSync();
+        acquireGpsTimeOffset();      // accurate GPS satellite time (~10-30s), overwrites server time
+
+        // Gate location recording behind server-time calibration so the very first record
+        // carries a corrected timestamp (not raw device clock).  Max delay ≈ 10 s (HTTP timeout).
+        // Even on failure the callback fires and location updates begin with device-clock fallback.
+        startPeriodicSync();         // safe to start immediately — only syncs, never saves records
+        calibrateTimeFromServer(() -> {
+            // Runs on main thread after server responds (or times out)
+            setupLocationCallback();
+            startLocationUpdates();
+            startPeriodicLocationFetch();
+        });
 
         scheduleNextAlarm();
         scheduleWatchdog();
@@ -377,8 +388,9 @@ public class LocationTrackingService extends Service {
             Log.d(TAG, "🚗 Moving - using GPS coordinates");
         }
 
-        // Get data that's safe on main thread
-        long currentTime = location.getTime();
+        // Use server-calibrated true time (offset set from HTTP Date header in onCreate).
+        // This is independent of the device clock — changing the device time has no effect.
+        long currentTime = sessionManager.getTrueTimeMs();
         int battery = getBatteryLevel();
         float speedToSave = isStationary ? 0 : (location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0);
 
@@ -428,6 +440,7 @@ public class LocationTrackingService extends Service {
                 db.locationTrackDao().insert(track);
                 sessionManager.saveLastRecNo(nextRecNo);
                 lastSavedLocation = new Location(locationToSave);
+
 
                 // ✅ Log datatype info
                 String datatypeStr = getDatatypeString(datatype);
@@ -701,9 +714,89 @@ public class LocationTrackingService extends Service {
         });
     }
 
+    /**
+     * Registers a one-shot listener on LocationManager.GPS_PROVIDER (direct GPS chip,
+     * not FusedLocationProvider). The GPS chip gets its time from satellite atomic clocks,
+     * so location.getTime() here is true UTC — unaffected by any device clock change.
+     *
+     * Offset formula:  offset = gps_fix_time − elapsed_at_fix
+     * True time later: offset + SystemClock.elapsedRealtime()
+     *
+     * Triggered on every service start and reboot. Overwrites the server-time offset
+     * with the more accurate GPS satellite value once the first fix arrives.
+     */
+    private void acquireGpsTimeOffset() {
+        LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        if (lm == null || !lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            Log.d(TAG, "GPS provider unavailable — skipping GPS time sync");
+            return;
+        }
+
+        gpsTimeListener = new LocationListener() {
+            @Override
+            public void onLocationChanged(Location location) {
+                if (location.getTime() > 0 && location.getElapsedRealtimeNanos() > 0) {
+                    // Anchor GPS satellite time to the monotonic clock at the exact fix moment
+                    long gpsFixElapsedMs = location.getElapsedRealtimeNanos() / 1_000_000L;
+                    long gpsOffset = location.getTime() - gpsFixElapsedMs;
+                    sessionManager.saveTimeOffset(gpsOffset);
+                    Log.d(TAG, "✓ GPS time offset calibrated: " + gpsOffset
+                            + " (fix UTC=" + location.getTime() + ")");
+                    // One fix is enough — remove listener to save battery
+                    lm.removeUpdates(this);
+                    gpsTimeListener = null;
+                }
+            }
+
+            @Override public void onProviderEnabled(String provider) {}
+            @Override public void onProviderDisabled(String provider) {}
+        };
+
+        try {
+            lm.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    0, 0,
+                    gpsTimeListener,
+                    Looper.getMainLooper()
+            );
+            Log.d(TAG, "GPS time sync listener registered");
+        } catch (SecurityException e) {
+            Log.w(TAG, "GPS permission unavailable for time sync");
+            gpsTimeListener = null;
+        }
+    }
+
+    /**
+     * Fetches the server's current UTC time via HTTP Date header (HTTPS, port 443).
+     * Used as a fast fallback while waiting for the GPS fix (~2s vs ~10-30s).
+     * Stores a calibrated offset so getTrueTimeMs() is correct from the very first record.
+     *
+     * fetchServerTimeOffsetMs() captures SystemClock.elapsedRealtime() at the exact instant
+     * the response headers arrive, so the returned offset has minimal latency skew.
+     *
+     * onComplete is always posted to the main thread after the request finishes (success or
+     * failure) so callers can gate any work that requires a valid time offset.
+     */
+    private void calibrateTimeFromServer(Runnable onComplete) {
+        new Thread(() -> {
+            long offset = com.example.a_track.utils.ApiService.fetchServerTimeOffsetMs();
+            if (offset != Long.MIN_VALUE) {
+                sessionManager.saveTimeOffset(offset);
+                Log.d(TAG, "✓ Time calibrated from server: offset=" + offset + " ms");
+            } else {
+                Log.w(TAG, "⚠️ Server time unavailable - starting location with device time");
+            }
+            // Always unblock location recording, even on failure
+            if (onComplete != null) {
+                handler.post(onComplete);
+            }
+        }).start();
+    }
+
     private void cleanupOldRecords() {
         executorService.execute(() -> {
             java.util.Calendar calendar = java.util.Calendar.getInstance();
+            calendar.setTimeInMillis(sessionManager.getTrueTimeMs());
             calendar.set(java.util.Calendar.HOUR_OF_DAY, 0);
             calendar.set(java.util.Calendar.MINUTE, 0);
             calendar.set(java.util.Calendar.SECOND, 0);
@@ -947,7 +1040,7 @@ public class LocationTrackingService extends Service {
 
                 LocationTrack track = new LocationTrack(
                         mobileNumber, lat, lng, speed, angle,
-                        System.currentTimeMillis(), sessionId,
+                        sessionManager.getTrueTimeMs(), sessionId,
                         getBatteryLevel(), null, null,
                         "ALARM_MISS:30",
                         deviceInfo.getGpsState(), deviceInfo.getInternetState(),
@@ -996,6 +1089,12 @@ public class LocationTrackingService extends Service {
 
         if (fusedLocationClient != null && locationCallback != null) {
             fusedLocationClient.removeLocationUpdates(locationCallback);
+        }
+
+        if (gpsTimeListener != null) {
+            LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            if (lm != null) lm.removeUpdates(gpsTimeListener);
+            gpsTimeListener = null;
         }
 
         if (wakeLock != null && wakeLock.isHeld()) {

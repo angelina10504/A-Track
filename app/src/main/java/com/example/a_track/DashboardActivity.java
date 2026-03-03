@@ -232,7 +232,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             mMap.getUiSettings().setCompassEnabled(true);
 
             // Set default location (will be updated with actual location)
-            LatLng defaultLocation = new LatLng(21.1702, 72.8311); // Surat coordinates
+            LatLng defaultLocation = new LatLng(18.5526051, 73.7697251);
             mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(defaultLocation, 15));
 
             Log.d("DashboardActivity", "Map initialized successfully");
@@ -406,7 +406,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     private void updateLocationUI(Location location) {
         tvLatitude.setText(String.format(Locale.getDefault(), "Lat: %.6f", location.getLatitude()));
         tvLongitude.setText(String.format(Locale.getDefault(), "Lng: %.6f", location.getLongitude()));
-        tvDateTime.setText( dateFormat.format(new Date()));
+        tvDateTime.setText(dateFormat.format(new Date(sessionManager.getTrueTimeMs())));
         tvSpeed.setText(String.format(Locale.getDefault(), "%.2f km/h", location.getSpeed()*3.6f));
         tvAngle.setText(String.format(Locale.getDefault(), "Angle: %.0f°", location.getBearing()));
 
@@ -519,7 +519,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
 
         // Update session logout time in database, then navigate to login
         executorService.execute(() -> {
-            db.sessionDao().updateLogoutTime(sessionDbId, System.currentTimeMillis());
+            db.sessionDao().updateLogoutTime(sessionDbId, sessionManager.getTrueTimeMs());
 
             runOnUiThread(() -> {
                 Intent intent = new Intent(DashboardActivity.this, LoginActivity.class);
