@@ -13,7 +13,7 @@ public class SessionManager {
     private static final String KEY_MOBILE_NUMBER = "mobileNumber";
     private static final String KEY_SESSION_ID = "sessionId";
     private static final String KEY_SESSION_DB_ID = "sessionDbId";
-    private static final String KEY_LAST_BOOT_TIME = "lastBootTime";
+    private static final String KEY_TIME_OFFSET = "timeOffset";
 
     // ✅ NEW: Track app install time to detect reinstalls
     private static final String KEY_APP_INSTALL_TIME = "appInstallTime";
@@ -40,14 +40,14 @@ public class SessionManager {
 
 
     public void createLoginSession(String mobileNumber, String sessionId, int sessionDbId) {
-        // Get current boot time
-        long currentBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+        // Initial offset: best-effort from system clock; will be refined by NTP on first REBOOT/INSTALL save.
+        long initialOffset = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
 
         editor.putBoolean(KEY_IS_LOGGED_IN, true);
         editor.putString(KEY_MOBILE_NUMBER, mobileNumber);
         editor.putString(KEY_SESSION_ID, sessionId);
         editor.putInt(KEY_SESSION_DB_ID, sessionDbId);
-        editor.putLong(KEY_LAST_BOOT_TIME, currentBootTime);
+        editor.putLong(KEY_TIME_OFFSET, initialOffset);
         editor.putBoolean(KEY_LOGIN_LOGGED, false);
         editor.commit();
 
@@ -70,8 +70,26 @@ public class SessionManager {
         return prefs.getInt(KEY_SESSION_DB_ID, -1);
     }
 
-    public long getLastBootTime() {
-        return prefs.getLong(KEY_LAST_BOOT_TIME, 0);
+    /** Returns the stored time offset: (accurate UTC time) - SystemClock.elapsedRealtime(). */
+    public long getTimeOffset() {
+        return prefs.getLong(KEY_TIME_OFFSET, 0);
+    }
+
+    /** Saves the NTP-calibrated time offset. */
+    public void saveTimeOffset(long offset) {
+        prefs.edit().putLong(KEY_TIME_OFFSET, offset).apply();
+    }
+
+    /**
+     * Returns the current true time in milliseconds.
+     * Uses the NTP-calibrated offset when available, so the result is
+     * not affected by manual changes to the device clock.
+     */
+    public long getTrueTimeMs() {
+        long offset = getTimeOffset();
+        return offset != 0
+                ? offset + android.os.SystemClock.elapsedRealtime()
+                : System.currentTimeMillis();
     }
 
     // ✅ FIXED: Check if this is first run (install/reinstall)
@@ -145,11 +163,12 @@ public class SessionManager {
     // Called by BootReceiver after reboot — keeps session alive but marks it
     // so the service will log a datatype=1 (reboot) entry on first location save.
     public void onDeviceReboot() {
-        long newBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+        // Save initial offset from system clock; NTP will correct it on the first REBOOT save.
+        long initialOffset = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
         editor.putBoolean(KEY_LOGIN_LOGGED, false);
-        editor.putLong(KEY_LAST_BOOT_TIME, newBootTime);
+        editor.putLong(KEY_TIME_OFFSET, initialOffset);
         editor.commit();
-        Log.d(TAG, "Device reboot detected - login flag reset, boot time updated");
+        Log.d(TAG, "Device reboot detected - login flag reset, time offset initialised");
     }
 
     public void logout() {

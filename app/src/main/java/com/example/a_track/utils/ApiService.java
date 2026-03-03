@@ -13,8 +13,10 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLConnection;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import com.example.a_track.database.LocationTrack;
 
@@ -28,6 +30,53 @@ public class ApiService {
     private static final int TIMEOUT = 15000;
     private static final int PHOTO_TIMEOUT = 30000;
     private static final int VIDEO_TIMEOUT = 60000;  // ✅ NEW: Longer timeout for videos
+
+    /* ================================
+       SERVER TIME (HTTP Date header)
+       ================================ */
+
+    /**
+     * Makes a lightweight HEAD request to the server and computes a time offset
+     * calibrated to the device's monotonic clock.
+     *
+     * SystemClock.elapsedRealtime() is captured at the exact moment the response
+     * headers arrive — before any parsing — to eliminate latency skew.
+     *
+     * Returns:  offset = serverTimeMs − responseElapsedMs
+     * Use as:   trueTimeMs = offset + SystemClock.elapsedRealtime()
+     *
+     * Returns Long.MIN_VALUE on failure.
+     * Must be called from a background thread.
+     */
+    public static long fetchServerTimeOffsetMs() {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(BASE_URL).openConnection();
+            conn.setRequestMethod("HEAD");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.connect();
+
+            // ── Capture elapsed time the instant headers are available ──────────
+            String dateHeader = conn.getHeaderField("Date");
+            long responseElapsedMs = android.os.SystemClock.elapsedRealtime();
+            // ────────────────────────────────────────────────────────────────────
+
+            if (dateHeader != null) {
+                SimpleDateFormat sdf = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US);
+                long serverTimeMs = sdf.parse(dateHeader).getTime();
+                long offset = serverTimeMs - responseElapsedMs;
+                Log.d(TAG, "Server time offset: " + offset
+                        + " ms  (Date: " + dateHeader + ")");
+                return offset;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Server time fetch failed: " + e.getMessage());
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return Long.MIN_VALUE;
+    }
 
     /* ================================
        SYNC LOCATIONS (JSON)

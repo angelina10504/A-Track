@@ -51,16 +51,16 @@ public class FilterLocationActivity extends AppCompatActivity {
         db = AppDatabase.getInstance(this);
         sessionManager = new SessionManager(this);
 
-        startCalendar = Calendar.getInstance();
-        endCalendar = Calendar.getInstance();
+        long trueNow = sessionManager.getTrueTimeMs();
 
-        // Set default time range (yesterday 14:00 to 15:00 as example)
-        //startCalendar.add(Calendar.DAY_OF_MONTH, -1);
-        startCalendar.set(Calendar.HOUR_OF_DAY,0);
+        startCalendar = Calendar.getInstance();
+        startCalendar.setTimeInMillis(trueNow);
+        startCalendar.set(Calendar.HOUR_OF_DAY, 0);
         startCalendar.set(Calendar.MINUTE, 0);
         startCalendar.set(Calendar.SECOND, 0);
 
-        //endCalendar.add(Calendar.DAY_OF_MONTH, -1);
+        endCalendar = Calendar.getInstance();
+        endCalendar.setTimeInMillis(trueNow);
         endCalendar.set(Calendar.HOUR_OF_DAY, 23);
         endCalendar.set(Calendar.MINUTE, 59);
         endCalendar.set(Calendar.SECOND, 59);

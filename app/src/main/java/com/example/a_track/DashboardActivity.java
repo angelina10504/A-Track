@@ -406,7 +406,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
     private void updateLocationUI(Location location) {
         tvLatitude.setText(String.format(Locale.getDefault(), "Lat: %.6f", location.getLatitude()));
         tvLongitude.setText(String.format(Locale.getDefault(), "Lng: %.6f", location.getLongitude()));
-        tvDateTime.setText( dateFormat.format(new Date()));
+        tvDateTime.setText(dateFormat.format(new Date(sessionManager.getTrueTimeMs())));
         tvSpeed.setText(String.format(Locale.getDefault(), "%.2f km/h", location.getSpeed()*3.6f));
         tvAngle.setText(String.format(Locale.getDefault(), "Angle: %.0f°", location.getBearing()));
 
@@ -519,7 +519,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
 
         // Update session logout time in database, then navigate to login
         executorService.execute(() -> {
-            db.sessionDao().updateLogoutTime(sessionDbId, System.currentTimeMillis());
+            db.sessionDao().updateLogoutTime(sessionDbId, sessionManager.getTrueTimeMs());
 
             runOnUiThread(() -> {
                 Intent intent = new Intent(DashboardActivity.this, LoginActivity.class);
