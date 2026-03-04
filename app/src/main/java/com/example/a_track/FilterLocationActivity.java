@@ -7,6 +7,8 @@ import android.os.Bundle;
 import android.widget.Button;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -48,6 +50,7 @@ public class FilterLocationActivity extends AppCompatActivity {
         setContentView(R.layout.activity_filter_location);
 
         initViews();
+        applyWindowInsets();
         db = AppDatabase.getInstance(this);
         sessionManager = new SessionManager(this);
 
@@ -79,6 +82,23 @@ public class FilterLocationActivity extends AppCompatActivity {
 
         // Load all tracks initially
         loadAllTracks();
+    }
+
+    private void applyWindowInsets() {
+        int headerPx = (int) (12 * getResources().getDisplayMetrics().density);
+        int rvPx = (int) (8 * getResources().getDisplayMetrics().density);
+        // Header: push content below the status bar
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.filterLocationHeader), (view, insets) -> {
+            int statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            view.setPadding(headerPx, headerPx + statusTop, headerPx, headerPx);
+            return insets;
+        });
+        // RecyclerView: add bottom padding so the last item scrolls fully above the nav bar
+        ViewCompat.setOnApplyWindowInsetsListener(rvFilteredTracks, (view, insets) -> {
+            int navBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+            view.setPadding(rvPx, rvPx, rvPx, rvPx + navBottom);
+            return insets;
+        });
     }
 
     private void initViews() {

@@ -42,6 +42,17 @@ public class LoginActivity extends AppCompatActivity {
         db = AppDatabase.getInstance(this);
         executorService = Executors.newSingleThreadExecutor();
 
+        // If the device rebooted since last login, clear the session so user must login again.
+        // Capture session ID and logout time BEFORE clearing, then update the DB record so
+        // the old session shows a proper end time instead of "Ongoing" in session history.
+        int preRebootSessionId = sessionManager.getSessionDbId();
+        // Approximate logout time = when this boot started (closest to when the old session ended)
+        long rebootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+        if (sessionManager.clearSessionIfRebooted() && preRebootSessionId != -1) {
+            executorService.execute(() ->
+                    db.sessionDao().updateLogoutTime(preRebootSessionId, rebootTime));
+        }
+
         // Check if already logged in
         if (sessionManager.isLoggedIn()) {
             navigateToDashboard();

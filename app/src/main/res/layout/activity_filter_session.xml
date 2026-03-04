@@ -7,6 +7,7 @@
 
     <!-- Compact Header -->
     <LinearLayout
+        android:id="@+id/filterSessionHeader"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -125,6 +126,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:padding="8dp"/>
+        android:padding="8dp"
+        android:clipToPadding="false"/>
 
 </LinearLayout>
