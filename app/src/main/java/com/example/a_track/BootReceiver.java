@@ -7,11 +7,8 @@ import android.content.Intent;
 import android.os.Build;
 import android.util.Log;
 
-import androidx.work.OneTimeWorkRequest;
-import androidx.work.WorkManager;
-
+import com.example.a_track.database.AppDatabase;
 import com.example.a_track.utils.SessionManager;
-import com.example.a_track.workers.ServiceStartWorker;
 
 public class BootReceiver extends BroadcastReceiver {
 
@@ -30,40 +27,51 @@ public class BootReceiver extends BroadcastReceiver {
             return;
         }
 
-        // Shutdown/reboot about to happen — session is kept alive for auto-resume
+        // Shutdown/reboot about to happen — nothing to do here
         if (Intent.ACTION_SHUTDOWN.equals(action) ||
                 "android.intent.action.REBOOT".equals(action)) {
-            Log.d(TAG, "Device shutting down - session preserved for auto-resume");
+            Log.d(TAG, "Device shutting down - no action needed");
             return;
         }
 
-        // BOOT_COMPLETED or QUICKBOOT_POWERON
-        Log.d(TAG, "Boot action detected - checking session...");
+        // BOOT_COMPLETED or QUICKBOOT_POWERON — clear session so user must login again
+        Log.d(TAG, "Boot action detected - clearing session...");
         SessionManager sessionManager = new SessionManager(context);
 
         boolean loggedIn = sessionManager.isLoggedIn();
-        String mobile = sessionManager.getMobileNumber();
         Log.d(TAG, "isLoggedIn() = " + loggedIn);
-        Log.d(TAG, "mobileNumber = " + (mobile != null ? mobile : "null"));
 
         if (loggedIn) {
-            Log.d(TAG, "Active session found - calling onDeviceReboot()");
-            sessionManager.onDeviceReboot();
-            Log.d(TAG, "onDeviceReboot() complete");
+            if (!sessionManager.isSessionPreReboot()) {
+                // Session was already refreshed post-reboot by LoginActivity — do not touch it
+                Log.d(TAG, "Session is already post-reboot (user already logged in) - skipping");
+            } else {
+                int sessionDbId = sessionManager.getSessionDbId();
+                long logoutTime = sessionManager.getTrueTimeMs();
 
-            // On Android 12+ startForegroundService() is blocked from BroadcastReceiver
-            // in background. Delegate to WorkManager which runs in an allowed context.
-            Log.d(TAG, "Enqueueing ServiceStartWorker via WorkManager...");
-            try {
-                OneTimeWorkRequest startWork =
-                        new OneTimeWorkRequest.Builder(ServiceStartWorker.class).build();
-                WorkManager.getInstance(context).enqueue(startWork);
-                Log.d(TAG, "✓ ServiceStartWorker enqueued successfully - id: " + startWork.getId());
-            } catch (Exception e) {
-                Log.e(TAG, "✗ Failed to enqueue ServiceStartWorker: " + e.getMessage(), e);
+                // Clear pre-reboot session — user must login again
+                sessionManager.logout();
+                // Mark that the next login follows a reboot (so first location gets datatype=REBOOT)
+                sessionManager.setRebootedFlag();
+                Log.d(TAG, "Pre-reboot session cleared - user must login again");
+
+                // Record the logout time in DB on a background thread
+                if (sessionDbId != -1) {
+                    final PendingResult pendingResult = goAsync();
+                    AppDatabase db = AppDatabase.getInstance(context);
+                    new Thread(() -> {
+                        try {
+                            db.sessionDao().updateLogoutTime(sessionDbId, logoutTime);
+                            Log.d(TAG, "Session logout time recorded in DB for id: " + sessionDbId);
+                        } finally {
+                            pendingResult.finish();
+                        }
+                    }).start();
+                    return; // pendingResult.finish() signals completion from the thread
+                }
             }
         } else {
-            Log.d(TAG, "No active session - nothing to resume");
+            Log.d(TAG, "No active session - nothing to clear");
         }
 
         Log.d(TAG, "─── onReceive() complete ───");

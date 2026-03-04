@@ -4,6 +4,8 @@ package com.example.a_track;
 import android.os.Bundle;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import com.example.a_track.database.AppDatabase;
 import com.example.a_track.database.LocationTrack;
 import com.google.android.gms.maps.CameraUpdateFactory;
@@ -41,6 +43,7 @@ public class MapViewActivity extends AppCompatActivity implements OnMapReadyCall
         setContentView(R.layout.activity_map_view);
 
         tvMapInfo = findViewById(R.id.tvMapInfo);
+        applyWindowInsets();
 
         db = AppDatabase.getInstance(this);
         executorService = Executors.newSingleThreadExecutor();
@@ -60,6 +63,16 @@ public class MapViewActivity extends AppCompatActivity implements OnMapReadyCall
         if (mapFragment != null) {
             mapFragment.getMapAsync(this);
         }
+    }
+
+    private void applyWindowInsets() {
+        int basePx = (int) (16 * getResources().getDisplayMetrics().density);
+        // Header: push content below the status bar
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.mapHeader), (view, insets) -> {
+            int statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            view.setPadding(basePx, basePx + statusTop, basePx, basePx);
+            return insets;
+        });
     }
 
     @Override

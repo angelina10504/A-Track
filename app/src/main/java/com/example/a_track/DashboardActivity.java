@@ -21,6 +21,8 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -148,6 +150,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         setContentView(R.layout.activity_dashboard);
 
         initViews();
+        applyWindowInsets();
         sessionManager = new SessionManager(this);
         db = AppDatabase.getInstance(this);
         executorService = Executors.newSingleThreadExecutor();
@@ -181,6 +184,22 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             } else {
                 Toast.makeText(this, "Location service not ready", Toast.LENGTH_SHORT).show();
             }
+        });
+    }
+
+    private void applyWindowInsets() {
+        int basePx = (int) (16 * getResources().getDisplayMetrics().density);
+        // Header: push content below the status bar
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.dashboardHeader), (view, insets) -> {
+            int statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            view.setPadding(basePx, basePx + statusTop, basePx, basePx);
+            return insets;
+        });
+        // ScrollView: add bottom padding so the last button scrolls fully above the nav bar
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.dashboardScrollView), (view, insets) -> {
+            int navBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+            view.setPadding(0, 0, 0, navBottom);
+            return insets;
         });
     }
 

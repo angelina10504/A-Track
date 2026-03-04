@@ -5,7 +5,7 @@ public final class DataTypes {
     private DataTypes() {}
 
     public static final int INSTALL      = 0;   // Fresh install or reinstall detected
-    public static final int REBOOT       = 1;   // Device rebooted or new login
+    public static final int REBOOT       = 1;   // Device rebooted after install
     public static final int NORMAL       = 2;   // Regular location tracking every 1 min
     public static final int MOCK         = 8;   // Fake GPS detected
     public static final int PHOTO        = 50;  // Photo taken and saved

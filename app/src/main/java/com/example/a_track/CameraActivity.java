@@ -39,6 +39,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.widget.VideoView;
 import androidx.core.content.PermissionChecker;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.example.a_track.database.AppDatabase;
 import com.example.a_track.database.LocationTrack;
@@ -106,6 +108,7 @@ public class CameraActivity extends AppCompatActivity {
         setContentView(R.layout.activity_camera);
 
         initViews();
+        applyWindowInsets();
         getLocationDataFromIntent();
 
         db = AppDatabase.getInstance(this);
@@ -119,6 +122,24 @@ public class CameraActivity extends AppCompatActivity {
         }
 
         setupClickListeners();
+    }
+
+    private void applyWindowInsets() {
+        int basePx = (int) (16 * getResources().getDisplayMetrics().density);
+
+        // Bottom bar: add nav bar height so buttons sit above the navigation bar
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.bottomControls), (view, insets) -> {
+            int navBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+            view.setPadding(basePx, basePx, basePx, basePx + navBottom);
+            return insets;
+        });
+
+        // Top bar: add status bar height so location info sits below the status bar
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.topBar), (view, insets) -> {
+            int statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            view.setPadding(basePx, basePx + statusTop, basePx, basePx);
+            return insets;
+        });
     }
 
     private void initViews() {

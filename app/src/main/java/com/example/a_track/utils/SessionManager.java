@@ -14,6 +14,8 @@ public class SessionManager {
     private static final String KEY_SESSION_ID = "sessionId";
     private static final String KEY_SESSION_DB_ID = "sessionDbId";
     private static final String KEY_TIME_OFFSET = "timeOffset";
+    private static final String KEY_REBOOTED = "rebooted";
+    private static final String KEY_BOOT_TIME = "bootTime";
 
     // ✅ NEW: Track app install time to detect reinstalls
     private static final String KEY_APP_INSTALL_TIME = "appInstallTime";
@@ -43,12 +45,19 @@ public class SessionManager {
         // Initial offset: best-effort from system clock; will be refined by NTP on first REBOOT/INSTALL save.
         long initialOffset = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
 
+        // Only set the reboot datatype flag if this login follows a device reboot
+        boolean afterReboot = prefs.getBoolean(KEY_REBOOTED, false);
+        // Save the current device boot epoch so we can detect reboots on next app open
+        long bootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+
         editor.putBoolean(KEY_IS_LOGGED_IN, true);
         editor.putString(KEY_MOBILE_NUMBER, mobileNumber);
         editor.putString(KEY_SESSION_ID, sessionId);
         editor.putInt(KEY_SESSION_DB_ID, sessionDbId);
         editor.putLong(KEY_TIME_OFFSET, initialOffset);
-        editor.putBoolean(KEY_LOGIN_LOGGED, false);
+        editor.putLong(KEY_BOOT_TIME, bootTime);
+        editor.putBoolean(KEY_LOGIN_LOGGED, !afterReboot); // false = reboot login, true = normal login
+        editor.putBoolean(KEY_REBOOTED, false);            // consume the flag
         editor.commit();
 
         Log.d(TAG, "Login session created for: " + mobileNumber);
@@ -169,6 +178,51 @@ public class SessionManager {
         editor.putLong(KEY_TIME_OFFSET, initialOffset);
         editor.commit();
         Log.d(TAG, "Device reboot detected - login flag reset, time offset initialised");
+    }
+
+    /**
+     * Returns true if the active session was created before the current boot
+     * (i.e. the device has rebooted since the session was established).
+     * Returns false if the session is already a post-reboot session.
+     */
+    public boolean isSessionPreReboot() {
+        if (!isLoggedIn()) return false;
+        long savedBootTime = prefs.getLong(KEY_BOOT_TIME, 0);
+        // No boot time saved means an old session before we added this field — treat as pre-reboot
+        if (savedBootTime == 0) return true;
+        long currentBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+        return Math.abs(currentBootTime - savedBootTime) > 60_000L;
+    }
+
+    /**
+     * Checks if the device has rebooted since the session was created by comparing
+     * saved vs current device boot epoch. If a reboot is detected, the session is
+     * cleared and the reboot flag is set so the next login gets datatype=REBOOT.
+     * Call this in LoginActivity before checking isLoggedIn().
+     * @return true if a reboot was detected and session was cleared
+     */
+    public boolean clearSessionIfRebooted() {
+        if (!isLoggedIn()) return false;
+
+        long savedBootTime = prefs.getLong(KEY_BOOT_TIME, 0);
+        if (savedBootTime == 0) return false;
+
+        long currentBootTime = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
+        // 60 seconds tolerance covers NTP adjustments; any real reboot shifts boot time by minutes
+        if (Math.abs(currentBootTime - savedBootTime) > 60_000L) {
+            Log.d(TAG, "Reboot detected via boot time change - clearing session");
+            logout();
+            setRebootedFlag();
+            return true;
+        }
+
+        return false;
+    }
+
+    // Called by BootReceiver after logout() to mark that the next login follows a reboot
+    public void setRebootedFlag() {
+        prefs.edit().putBoolean(KEY_REBOOTED, true).apply();
+        Log.d(TAG, "Reboot flag set - next login will use datatype=REBOOT");
     }
 
     public void logout() {
