@@ -15,8 +15,9 @@ import java.util.Locale;
 
 public class CsvHelper {
 
+    // MySQL-compatible datetime format required for server DB import
     private static final SimpleDateFormat DATE_FORMAT =
-            new SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault());
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
 
     private static final SimpleDateFormat FILE_DATE_FORMAT =
             new SimpleDateFormat("ddMMyyyy_HHmmss", Locale.getDefault());
@@ -34,49 +35,56 @@ public class CsvHelper {
                     context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), filename);
             FileWriter writer = new FileWriter(csvFile);
 
-            // Header — matches server DB column order
-            writer.append("RecNo,MobileNumber,SessionId,")
-                  .append("Latitude,Longitude,Speed,Angle,")
-                  .append("GpsDateTime,MobileTime,")
-                  .append("Battery,GpsState,InternetState,FlightState,RoamingState,")
-                  .append("IsNetThere,IsNwThere,IsMoving,")
-                  .append("ModelNo,ModelOS,ApkName,ImsiNo,Nss,")
-                  .append("DataType,TextMsg,PhotoPath,VideoPath\n");
+            // Header — exact server DB column order (41 fields)
+            writer.append("id,imei,level,ch_km,observations,lat,lng,gpsdatetime,server_date_time,")
+                  .append("angle,speed,extbat,intbat,dooropen,altitude,ignition,datatype,datasource,")
+                  .append("nss,RecNo,ImsiNo,GpsState,InternetState,FlightState,RoamingState,")
+                  .append("IsNetThere,IsNwThere,NwLat,NwLong,NwDateTime,mobile_time,IsMoving,")
+                  .append("ModelNo,ModelOS,ApkName,TrackState,TextMsg,AudioPath,PhotoPath,VdoPath,usage_data\n");
 
-            // Rows
+            // Rows — columns in exact server order
             for (LocationTrack t : tracks) {
-                writer.append(csv(t.getRecNo())).append(",");
-                writer.append(csv(t.getMobileNumber())).append(",");
-                writer.append(csv(t.getSessionId())).append(",");
-
-                writer.append(csv(t.getLatitude())).append(",");
-                writer.append(csv(t.getLongitude())).append(",");
-                writer.append(csv(t.getSpeed())).append(",");
-                writer.append(csv(t.getAngle())).append(",");
-
-                writer.append(csvDate(t.getDateTime())).append(",");
-                writer.append(csvDate(t.getMobileTime())).append(",");
-
-                writer.append(csv(t.getBattery())).append(",");
-                writer.append(csv(t.getGpsState())).append(",");
-                writer.append(csv(t.getInternetState())).append(",");
-                writer.append(csv(t.getFlightState())).append(",");
-                writer.append(csv(t.getRoamingState())).append(",");
-
-                writer.append(csv(t.getIsNetThere())).append(",");
-                writer.append(csv(t.getIsNwThere())).append(",");
-                writer.append(csv(t.getIsMoving())).append(",");
-
-                writer.append(csv(t.getModelNo())).append(",");
-                writer.append(csv(t.getModelOS())).append(",");
-                writer.append(csv(t.getApkName())).append(",");
-                writer.append(csv(t.getImsiNo())).append(",");
-                writer.append(csv(t.getNss())).append(",");
-
-                writer.append(csv(t.getDatatype())).append(",");
-                writer.append(csv(t.getTextMsg())).append(",");
-                writer.append(csvFilename(t.getPhotoPath())).append(",");
-                writer.append(csvFilename(t.getVideoPath())).append("\n");
+                writer.append("").append(",");                             // 1.  id (AUTO_INCREMENT)
+                writer.append(csv(t.getMobileNumber())).append(",");      // 2.  imei
+                writer.append("").append(",");                             // 3.  level
+                writer.append("").append(",");                             // 4.  ch_km
+                writer.append("").append(",");                             // 5.  observations
+                writer.append(csv(t.getLatitude())).append(",");          // 6.  lat
+                writer.append(csv(t.getLongitude())).append(",");         // 7.  lng
+                writer.append(csvDate(t.getDateTime())).append(",");      // 8.  gpsdatetime
+                writer.append("").append(",");                             // 9.  server_date_time
+                writer.append(csv(t.getAngle())).append(",");             // 10. angle
+                writer.append(csv(t.getSpeed())).append(",");             // 11. speed
+                writer.append("0").append(",");                            // 12. extbat
+                writer.append(csv(t.getBattery())).append(",");           // 13. intbat
+                writer.append("0").append(",");                            // 14. dooropen
+                writer.append("").append(",");                             // 15. altitude
+                writer.append("").append(",");                             // 16. ignition
+                writer.append(csv(t.getDatatype())).append(",");          // 17. datatype
+                writer.append("").append(",");                             // 18. datasource
+                writer.append(csv(t.getNss())).append(",");               // 19. nss
+                writer.append(csv(t.getRecNo())).append(",");             // 20. RecNo
+                writer.append(csv(t.getImsiNo())).append(",");            // 21. ImsiNo
+                writer.append(csv(t.getGpsState())).append(",");          // 22. GpsState
+                writer.append(csv(t.getInternetState())).append(",");     // 23. InternetState
+                writer.append(csv(t.getFlightState())).append(",");       // 24. FlightState
+                writer.append(csv(t.getRoamingState())).append(",");      // 25. RoamingState
+                writer.append(csv(t.getIsNetThere())).append(",");        // 26. IsNetThere
+                writer.append(csv(t.getIsNwThere())).append(",");         // 27. IsNwThere
+                writer.append("").append(",");                             // 28. NwLat
+                writer.append("").append(",");                             // 29. NwLong
+                writer.append("").append(",");                             // 30. NwDateTime
+                writer.append(csvDate(t.getMobileTime())).append(",");    // 31. mobile_time
+                writer.append(csv(t.getIsMoving())).append(",");          // 32. IsMoving
+                writer.append(csv(t.getModelNo())).append(",");           // 33. ModelNo
+                writer.append(csv(t.getModelOS())).append(",");           // 34. ModelOS
+                writer.append(csv(t.getApkName())).append(",");           // 35. ApkName
+                writer.append("").append(",");                             // 36. TrackState
+                writer.append(csv(t.getTextMsg())).append(",");           // 37. TextMsg
+                writer.append("").append(",");                             // 38. AudioPath
+                writer.append(csvFilename(t.getPhotoPath())).append(","); // 39. PhotoPath
+                writer.append(csvFilename(t.getVideoPath())).append(","); // 40. VdoPath
+                writer.append("").append("\n");                            // 41. usage_data
             }
 
             writer.flush();
