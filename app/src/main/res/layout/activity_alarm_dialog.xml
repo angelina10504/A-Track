@@ -1,60 +1,235 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Root fills the screen with a dark dim overlay (24 dp padding on all sides).
+    The white card stretches to fill that space so the "All OK" button is
+    always anchored at the bottom regardless of screen height.
+    All content above the button lives in a ScrollView so nothing is hidden.
+-->
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#CC000000"
     android:padding="24dp">
 
+    <!-- Card fills the padded area; button is always visible at the bottom -->
     <LinearLayout
+        android:id="@+id/layoutDialogCard"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_centerInParent="true"
+        android:layout_height="match_parent"
         android:background="@android:color/white"
         android:orientation="vertical"
-        android:padding="32dp"
-        android:gravity="center">
+        android:padding="20dp">
 
-        <!-- Alert Icon -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="⚠️"
-            android:textSize="72sp"
-            android:layout_marginBottom="24dp" />
+        <!-- Scrollable area: everything except the button -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="none"
+            android:fillViewport="true">
 
-        <!-- Message -->
-        <TextView
-            android:id="@+id/tvAlarmMessage"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="All OK? Press this button"
-            android:textSize="24sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/black"
-            android:gravity="center"
-            android:layout_marginBottom="16dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
-        <!-- Timer -->
-        <TextView
-            android:id="@+id/tvAlarmTimer"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="30 seconds"
-            android:textSize="20sp"
-            android:textColor="#FF5722"
-            android:textStyle="bold"
-            android:layout_marginBottom="32dp" />
+                <!-- Alert icon -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:text="⚠️"
+                    android:textSize="48sp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp" />
 
-        <!-- All OK Button -->
+                <!-- Message -->
+                <TextView
+                    android:id="@+id/tvAlarmMessage"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="All OK? Press this button"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@android:color/black"
+                    android:gravity="center"
+                    android:layout_marginBottom="4dp" />
+
+                <!-- Countdown timer -->
+                <TextView
+                    android:id="@+id/tvAlarmTimer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="30 seconds"
+                    android:textSize="16sp"
+                    android:textColor="#FF5722"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Divider -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#DDDDDD"
+                    android:layout_marginBottom="10dp" />
+
+                <!-- Section header -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="SYSTEM HEALTH CHECK"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="#757575"
+                    android:layout_marginBottom="8dp" />
+
+                <!-- Location -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Location"
+                        android:textSize="13sp"
+                        android:textColor="#424242" />
+
+                    <TextView
+                        android:id="@+id/tvLocationStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="…"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#424242" />
+                </LinearLayout>
+
+                <!-- Internet -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Internet"
+                        android:textSize="13sp"
+                        android:textColor="#424242" />
+
+                    <TextView
+                        android:id="@+id/tvInternetStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="…"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#424242" />
+                </LinearLayout>
+
+                <!-- Q Count -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Q Count"
+                        android:textSize="13sp"
+                        android:textColor="#424242" />
+
+                    <TextView
+                        android:id="@+id/tvQCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="…"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#424242" />
+                </LinearLayout>
+
+                <!-- Battery Optimized -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Bat Optimized"
+                        android:textSize="13sp"
+                        android:textColor="#424242" />
+
+                    <TextView
+                        android:id="@+id/tvBatteryOptimized"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="…"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#424242" />
+                </LinearLayout>
+
+                <!-- Play Protect -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Play Protect"
+                        android:textSize="13sp"
+                        android:textColor="#424242" />
+
+                    <TextView
+                        android:id="@+id/tvPlayProtect"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="…"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#424242" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- Divider above button -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#DDDDDD"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="12dp" />
+
+        <!-- All OK button — always visible, anchored at bottom -->
         <Button
             android:id="@+id/btnAllOk"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="All OK"
-            android:textSize="20sp"
+            android:textSize="18sp"
             android:textStyle="bold"
             android:backgroundTint="#4CAF50"
-            android:paddingVertical="16dp" />
+            android:minHeight="56dp" />
 
     </LinearLayout>
 
