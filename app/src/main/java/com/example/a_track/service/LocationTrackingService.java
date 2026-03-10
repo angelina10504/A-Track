@@ -97,8 +97,8 @@ public class LocationTrackingService extends Service {
     private int stationaryCount = 0;
     private static final float STATIONARY_THRESHOLD = 5.0f;
     private static final float MIN_SPEED = 0.5f;
-    private static final int MIN_ALARM_INTERVAL = 30 * 1000; // 30 seconds (testing)
-    private static final int MAX_ALARM_INTERVAL = 60 * 1000; // 60 seconds (testing)
+    private static final int MIN_ALARM_INTERVAL = 3 * 60 * 1000; // 15 minutes
+    private static final int MAX_ALARM_INTERVAL = 5 * 60 * 1000; // 25 minutes
 
     // ✅ Track if we've already logged install/reboot for this session
     private boolean hasLoggedInstallReboot = false;

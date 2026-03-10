@@ -136,10 +136,15 @@ public class AlarmDialogActivity extends AppCompatActivity {
         }
 
         // --- Play Protect (package verifier) ---
+        // On modern Android, Play Protect state is reflected in package_verifier_user_consent:
+        //   1 = enabled, -1 = user disabled. package_verifier_enable alone stays 1 by default.
         try {
             int verifyEnabled = Settings.Global.getInt(
                     getContentResolver(), "package_verifier_enable", 1);
-            tvPlayProtect.setText(verifyEnabled == 1 ? "On" : "Off");
+            int userConsent = Settings.Global.getInt(
+                    getContentResolver(), "package_verifier_user_consent", 1);
+            boolean playProtectOn = (verifyEnabled == 1) && (userConsent != -1);
+            tvPlayProtect.setText(playProtectOn ? "On" : "Off");
         } catch (Exception e) {
             tvPlayProtect.setText("N/A");
         }
