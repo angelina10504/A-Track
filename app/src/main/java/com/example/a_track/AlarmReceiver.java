@@ -44,7 +44,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             // Mark as missed via service (only if dialog didn't already handle it)
             Intent serviceIntent = new Intent(context, com.example.a_track.service.LocationTrackingService.class);
             serviceIntent.setAction("ALARM_DISMISSED");
-            context.startService(serviceIntent);
+            context.startForegroundService(serviceIntent);
 
             Log.d(TAG, "Alarm auto-stopped after 30s, marked as missed");
             return;
@@ -71,7 +71,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             // Save as MISSED since user dismissed without pressing ALL OK
             Intent serviceIntent = new Intent(context, com.example.a_track.service.LocationTrackingService.class);
             serviceIntent.setAction("ALARM_DISMISSED");
-            context.startService(serviceIntent);
+            context.startForegroundService(serviceIntent);
 
             Log.d(TAG, "Vibration stopped, alarm marked as missed");
             return;

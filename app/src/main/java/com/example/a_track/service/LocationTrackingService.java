@@ -97,8 +97,8 @@ public class LocationTrackingService extends Service {
     private int stationaryCount = 0;
     private static final float STATIONARY_THRESHOLD = 5.0f;
     private static final float MIN_SPEED = 0.5f;
-    private static final int MIN_ALARM_INTERVAL = 15 * 60 * 1000; // 15 minutes
-    private static final int MAX_ALARM_INTERVAL = 25 * 60 * 1000; // 25 minutes
+    private static final int MIN_ALARM_INTERVAL = 3 * 60 * 1000; // 15 minutes
+    private static final int MAX_ALARM_INTERVAL = 5 * 60 * 1000; // 25 minutes
 
     // ✅ Track if we've already logged install/reboot for this session
     private boolean hasLoggedInstallReboot = false;
@@ -911,11 +911,12 @@ public class LocationTrackingService extends Service {
         AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            Log.e(TAG, "✗ CANNOT schedule exact alarms - using setWindow() fallback");
-            // Fallback: window-based alarm (within 5 min window, still fires in Doze)
-            alarmManager.setWindow(
-                    AlarmManager.RTC_WAKEUP, triggerTime, 5 * 60 * 1000, pendingIntent
-            );
+            // setAlarmClock fires even in Doze and needs no SCHEDULE_EXACT_ALARM permission
+            Log.w(TAG, "✗ SCHEDULE_EXACT_ALARM not granted - using setAlarmClock() fallback");
+            AlarmManager.AlarmClockInfo clockInfo =
+                    new AlarmManager.AlarmClockInfo(triggerTime, pendingIntent);
+            alarmManager.setAlarmClock(clockInfo, pendingIntent);
+            Log.d(TAG, "✓ Alarm clock scheduled (Doze-safe fallback)");
         } else {
             alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent

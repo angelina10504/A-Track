@@ -116,4 +116,7 @@ public interface LocationTrackDao {
     @Query("SELECT * FROM location_tracks WHERE mobileNumber = :mobile ORDER BY dateTime DESC LIMIT 1")
     LocationTrack getLastLocationSync(String mobile);
 
+    @Query("SELECT COUNT(*) FROM location_tracks WHERE mobileNumber = :mobile AND synced = 0")
+    int getUnsyncedCount(String mobile);
+
 }

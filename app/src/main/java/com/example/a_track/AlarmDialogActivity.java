@@ -22,7 +22,11 @@ import com.example.a_track.utils.SessionManager;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.app.KeyguardManager;
+import android.graphics.Color;
 import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
+import android.widget.LinearLayout;
 public class AlarmDialogActivity extends AppCompatActivity {
 
     private static final String TAG = "AlarmDialogActivity";
@@ -31,6 +35,14 @@ public class AlarmDialogActivity extends AppCompatActivity {
     private TextView tvMessage;
     private TextView tvTimer;
     private Button btnAllOk;
+
+    // Health check views
+    private LinearLayout layoutDialogCard;
+    private TextView tvLocationStatus;
+    private TextView tvInternetStatus;
+    private TextView tvQCount;
+    private TextView tvBatteryOptimized;
+    private TextView tvPlayProtect;
 
     private MediaPlayer mediaPlayer;
     private Vibrator vibrator;
@@ -76,6 +88,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
         sessionManager = new SessionManager(this);
 
         initViews();
+        loadSystemHealth();
         startAlarm();
         startCountdown();
     }
@@ -85,7 +98,77 @@ public class AlarmDialogActivity extends AppCompatActivity {
         tvTimer = findViewById(R.id.tvAlarmTimer);
         btnAllOk = findViewById(R.id.btnAllOk);
 
+        layoutDialogCard = findViewById(R.id.layoutDialogCard);
+        tvLocationStatus = findViewById(R.id.tvLocationStatus);
+        tvInternetStatus = findViewById(R.id.tvInternetStatus);
+        tvQCount = findViewById(R.id.tvQCount);
+        tvBatteryOptimized = findViewById(R.id.tvBatteryOptimized);
+        tvPlayProtect = findViewById(R.id.tvPlayProtect);
+
         btnAllOk.setOnClickListener(v -> handleResponse());
+    }
+
+    private void loadSystemHealth() {
+        DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+
+        // --- Location ---
+        boolean locationOk = "1".equals(deviceInfo.getGpsState());
+        tvLocationStatus.setText(locationOk ? "Available" : "NA");
+
+        // --- Internet ---
+        boolean internetOk = "1".equals(deviceInfo.getInternetState());
+        tvInternetStatus.setText(internetOk ? "Available" : "NA");
+
+        // --- Battery Optimization (API 23+) ---
+        // isIgnoringBatteryOptimizations() == true  →  app is EXEMPTED (good for tracking)
+        // isIgnoringBatteryOptimizations() == false →  app IS optimised (problem)
+        boolean batIssue = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                batIssue = !pm.isIgnoringBatteryOptimizations(getPackageName());
+                tvBatteryOptimized.setText(batIssue ? "Yes" : "No");
+            } else {
+                tvBatteryOptimized.setText("N/A");
+            }
+        } else {
+            tvBatteryOptimized.setText("N/A");
+        }
+
+        // --- Play Protect (package verifier) ---
+        // On modern Android, Play Protect state is reflected in package_verifier_user_consent:
+        //   1 = enabled, -1 = user disabled. package_verifier_enable alone stays 1 by default.
+        try {
+            int verifyEnabled = Settings.Global.getInt(
+                    getContentResolver(), "package_verifier_enable", 1);
+            int userConsent = Settings.Global.getInt(
+                    getContentResolver(), "package_verifier_user_consent", 1);
+            boolean playProtectOn = (verifyEnabled == 1) && (userConsent != -1);
+            tvPlayProtect.setText(playProtectOn ? "On" : "Off");
+        } catch (Exception e) {
+            tvPlayProtect.setText("N/A");
+        }
+
+        // --- Background colour: red tint on any issue ---
+        if (!locationOk || !internetOk || batIssue) {
+            layoutDialogCard.setBackgroundColor(Color.parseColor("#FFCDD2")); // Material Red 100
+        }
+
+        // --- Q Count: must run off the main thread ---
+        String mobileNumber = sessionManager.getMobileNumber();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executor.execute(() -> {
+            int count = 0;
+            try {
+                if (mobileNumber != null) {
+                    count = db.locationTrackDao().getUnsyncedCount(mobileNumber);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error fetching unsynced count: " + e.getMessage());
+            }
+            final int finalCount = count;
+            runOnUiThread(() -> tvQCount.setText(String.valueOf(finalCount)));
+        });
     }
 
     private void startAlarm() {
