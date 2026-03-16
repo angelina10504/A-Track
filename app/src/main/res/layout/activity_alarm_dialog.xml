@@ -189,7 +189,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginBottom="8dp">
+                    android:layout_marginBottom="6dp">
 
                     <TextView
                         android:layout_width="0dp"
@@ -201,6 +201,56 @@
 
                     <TextView
                         android:id="@+id/tvPlayProtect"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="…"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#424242" />
+                </LinearLayout>
+
+                <!-- Background Usage -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Bkgnd Usage"
+                        android:textSize="13sp"
+                        android:textColor="#424242" />
+
+                    <TextView
+                        android:id="@+id/tvBkgndUsage"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="…"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#424242" />
+                </LinearLayout>
+
+                <!-- Notifications -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Notifications"
+                        android:textSize="13sp"
+                        android:textColor="#424242" />
+
+                    <TextView
+                        android:id="@+id/tvNotifications"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="…"

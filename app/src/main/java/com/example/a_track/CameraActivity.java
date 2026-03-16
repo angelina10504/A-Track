@@ -1,8 +1,13 @@
 package com.example.a_track;
 
 import android.Manifest;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Bundle;
@@ -611,6 +616,65 @@ public class CameraActivity extends AppCompatActivity {
         // ✅ No rotation needed - ImageCompressor already handled it
     }
 
+    /**
+     * Builds the standard health-status string. Identical format to getDeviceHealthString()
+     * in LocationTrackingService. MUST be called on a background thread (DB query for Q).
+     */
+    private String getDeviceHealthString(String mobileNumber) {
+        DeviceInfoHelper di = new DeviceInfoHelper(this);
+
+        String loc = "1".equals(di.getGpsState()) ? "Ok" : "NA";
+        String net = "1".equals(di.getInternetState()) ? "Ok" : "NA";
+
+        int q = 0;
+        try {
+            if (mobileNumber != null) {
+                q = db.locationTrackDao().getUnsyncedCount(mobileNumber);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "getDeviceHealthString: Q count error: " + e.getMessage());
+        }
+
+        String batOpt = "No";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                batOpt = "Yes";
+            }
+        }
+
+        String playPro = "Off";
+        try {
+            int ve = Settings.Global.getInt(getContentResolver(), "package_verifier_enable", 1);
+            int uc = Settings.Global.getInt(getContentResolver(), "package_verifier_user_consent", 1);
+            playPro = (ve == 1 && uc != -1) ? "On" : "Off";
+        } catch (Exception e) {
+            Log.w(TAG, "getDeviceHealthString: PlayPro check error: " + e.getMessage());
+        }
+
+        String bkUsg = "Allowed";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && cm.getRestrictBackgroundStatus()
+                    == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED) {
+                bkUsg = "NA";
+            }
+        }
+
+        String notif = "On";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notif = (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED) ? "On" : "Off";
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            notif = (nm != null && nm.areNotificationsEnabled()) ? "On" : "Off";
+        }
+
+        return "Loc:" + loc + ", Net:" + net + ", Q:" + q
+                + ", BatOpt:" + batOpt + ", PlayPro:" + playPro
+                + ", BkUsg:" + bkUsg + ", Notif:" + notif;
+    }
+
     private void savePhotoRecord(String remarks) {
         if (capturedImageFile == null) {
             Toast.makeText(this, "No photo captured", Toast.LENGTH_SHORT).show();
@@ -649,6 +713,8 @@ public class CameraActivity extends AppCompatActivity {
                 sessionManager.saveLastRecNo(nextRecNo);
 
                 // Create record with compressed photo path
+                String healthStr = getDeviceHealthString(mobileNumber);
+                String photoTextMsg = remarks.isEmpty() ? healthStr : remarks + " | " + healthStr;
                 LocationTrack track = new LocationTrack(
                         mobileNumber,
                         latitude,
@@ -660,7 +726,7 @@ public class CameraActivity extends AppCompatActivity {
                         battery,
                         finalPhotoFile.getAbsolutePath(),
                         null,
-                        remarks.isEmpty() ? null : remarks,
+                        photoTextMsg,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
                         deviceInfo.getFlightState(),
@@ -742,6 +808,8 @@ public class CameraActivity extends AppCompatActivity {
                 sessionManager.saveLastRecNo(nextRecNo);
 
                 // Create record with datatype = 60 for video
+                String healthStr = getDeviceHealthString(mobileNumber);
+                String videoTextMsg = remarks.isEmpty() ? healthStr : remarks + " | " + healthStr;
                 LocationTrack track = new LocationTrack(
                         mobileNumber,
                         latitude,
@@ -753,7 +821,7 @@ public class CameraActivity extends AppCompatActivity {
                         battery,
                         null,  // photoPath is null
                         finalVideoFile.getAbsolutePath(),  // videoPath
-                        remarks.isEmpty() ? null : remarks,
+                        videoTextMsg,
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
                         deviceInfo.getFlightState(),
