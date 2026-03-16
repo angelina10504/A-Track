@@ -180,9 +180,12 @@ public class AlarmReceiver extends BroadcastReceiver {
 
         Log.d(TAG, "Notification shown, fullScreenAllowed=" + fullScreenAllowed);
 
-        // Reset the flag-71 guard for this fresh alarm cycle
+        // Reset all per-cycle guards for this fresh alarm
         context.getSharedPreferences("AlarmGuard", Context.MODE_PRIVATE)
-                .edit().putBoolean("alarm_missed_saved", false).apply();
+                .edit()
+                .putBoolean("alarm_missed_saved", false)
+                .putBoolean("health_alert_saved", false)
+                .apply();
 
         // Schedule guaranteed 30s timeout — fires even if AlarmDialogActivity never launches
         // (Android 15 background restriction). Cancels notification & marks missed.

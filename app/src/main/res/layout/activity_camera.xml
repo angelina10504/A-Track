@@ -93,6 +93,7 @@
                 android:layout_height="wrap_content"
                 android:inputType="text"
                 android:maxLines="3"
+                android:maxLength="100"
                 android:textColor="#FFFFFF" />
 
         </com.google.android.material.textfield.TextInputLayout>

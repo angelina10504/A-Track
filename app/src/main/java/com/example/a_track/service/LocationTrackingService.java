@@ -28,8 +28,11 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import android.provider.Settings;
 import androidx.core.app.NotificationCompat;
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
+import androidx.annotation.RequiresApi;
 import com.example.a_track.AlarmDialogActivity;
 import com.example.a_track.AlarmReceiver;
 import com.example.a_track.DataTypes;
@@ -51,7 +54,11 @@ import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 import com.example.a_track.workers.ServiceWatchdogWorker;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -98,10 +105,15 @@ public class LocationTrackingService extends Service {
     private static final float STATIONARY_THRESHOLD = 5.0f;
     private static final float MIN_SPEED = 0.5f;
     private static final int MIN_ALARM_INTERVAL = 3 * 60 * 1000; // 15 minutes
-    private static final int MAX_ALARM_INTERVAL = 5 * 60 * 1000; // 25 minutes
+    private static final int MAX_ALARM_INTERVAL =
+            5 * 60 * 1000; // 25 minutes
 
     // ✅ Track if we've already logged install/reboot for this session
     private boolean hasLoggedInstallReboot = false;
+
+    // Pending kill-reason record — set by logPreviousExitReason(), flushed on first real GPS fix
+    private volatile String pendingKillReason = null;
+    private volatile long   pendingKillTime   = 0;
 
 
     private final IBinder binder = new LocalBinder();
@@ -128,6 +140,11 @@ public class LocationTrackingService extends Service {
         executorService = Executors.newSingleThreadExecutor();
         handler = new Handler(Looper.getMainLooper());
         random = new Random(); // must be initialized before startPeriodicSync()
+
+        // ─── Log previous app kill / crash reason (API 30+) ───────────────────
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            logPreviousExitReason();
+        }
 
         // Acquire wake lock
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
@@ -195,6 +212,194 @@ public class LocationTrackingService extends Service {
 
         Log.d(TAG, "Alarm system initialized");
         Log.d(TAG, "─── onCreate() complete — service is running ───");
+    }
+
+    // ─── App kill / crash reason logging ──────────────────────────────────────
+
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void logPreviousExitReason() {
+        executorService.execute(() -> {
+            try {
+                android.content.SharedPreferences prefs =
+                        getSharedPreferences("KillLog", MODE_PRIVATE);
+
+                // ── Phase 1: Restore a crash reason that was detected but not yet saved ──
+                // This happens when the app crashed before the user logged in: the reason
+                // was detected on a previous service start but saveLocationToDatabase()
+                // returned early (no session), and then the service was destroyed.
+                String restored = prefs.getString("pending_kill_reason", null);
+                if (restored != null) {
+                    pendingKillReason = restored;
+                    pendingKillTime   = prefs.getLong("pending_kill_time", 0);
+                    Log.d(TAG, "✓ Restored unsaved crash reason from previous start: " + pendingKillReason);
+                    return; // Already handling this — wait for GPS fix to save it
+                }
+
+                // ── Phase 2: Detect a new crash from the system's exit history ──
+                ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                if (am == null) return;
+
+                List<ApplicationExitInfo> reasons =
+                        am.getHistoricalProcessExitReasons(null, 0, 1);
+                if (reasons.isEmpty()) return;
+
+                ApplicationExitInfo info = reasons.get(0);
+
+                // Only log reasons that actually crash or stop the app from working.
+                // OS-level kills (low memory, signals, OEM battery optimizer) are not app faults.
+                int reason = info.getReason();
+                if (reason != ApplicationExitInfo.REASON_CRASH
+                        && reason != ApplicationExitInfo.REASON_CRASH_NATIVE
+                        && reason != ApplicationExitInfo.REASON_ANR
+                        && reason != ApplicationExitInfo.REASON_INITIALIZATION_FAILURE) {
+                    Log.d(TAG, "Skipping non-crash exit: " + translateExitReason(reason));
+                    return;
+                }
+
+                // Guard: skip if this crash event was already fully saved to DB
+                long lastLoggedKillTime = prefs.getLong("last_logged_kill_time", 0);
+                if (info.getTimestamp() <= lastLoggedKillTime) {
+                    Log.d(TAG, "Kill event already saved to DB (ts=" + info.getTimestamp() + ") — skipping");
+                    return;
+                }
+
+                // Build a short prefix then append extracted crash details
+                String prefix;
+                switch (reason) {
+                    case ApplicationExitInfo.REASON_CRASH:               prefix = "CRASH"; break;
+                    case ApplicationExitInfo.REASON_CRASH_NATIVE:        prefix = "CRASH_NATIVE"; break;
+                    case ApplicationExitInfo.REASON_ANR:                 prefix = "ANR"; break;
+                    case ApplicationExitInfo.REASON_INITIALIZATION_FAILURE: prefix = "INIT_FAILURE"; break;
+                    default:                                             prefix = "REASON_" + reason; break;
+                }
+                String crashInfo = extractCrashInfo(info);
+                String reasonText = prefix + " | " + crashInfo;
+
+                // Trim to 500 chars — DB textMsg is TEXT, this is safe and informative
+                if (reasonText.length() > 500) {
+                    reasonText = reasonText.substring(0, 500);
+                }
+
+                Log.w(TAG, "New crash event detected: " + reasonText);
+
+                pendingKillReason = reasonText;
+                pendingKillTime   = info.getTimestamp();
+
+                // Persist so the record survives service restarts before user logs in.
+                // last_logged_kill_time is written only AFTER the DB record is saved,
+                // so a restart before that point will restore and retry rather than lose it.
+                prefs.edit()
+                        .putString("pending_kill_reason", reasonText)
+                        .putLong("pending_kill_time", info.getTimestamp())
+                        .apply();
+                Log.d(TAG, "✓ Crash reason parked and persisted — will save with first real GPS fix after login");
+
+            } catch (Exception e) {
+                Log.e(TAG, "Error logging previous exit reason: " + e.getMessage());
+            }
+        });
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private String translateExitReason(int reason) {
+        switch (reason) {
+            case ApplicationExitInfo.REASON_ANR:
+                return "REASON_ANR: App not responding, main thread blocked >5s";
+            case ApplicationExitInfo.REASON_CRASH:
+                return "REASON_CRASH: Unhandled Java/Kotlin exception";
+            case ApplicationExitInfo.REASON_CRASH_NATIVE:
+                return "REASON_CRASH_NATIVE: Native C/C++ crash (segfault or abort)";
+            case ApplicationExitInfo.REASON_DEPENDENCY_DIED:
+                return "REASON_DEPENDENCY_DIED: A dependent process died";
+            case ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE:
+                return "REASON_EXCESSIVE_RESOURCE_USAGE: Killed for excess CPU/memory use";
+            case ApplicationExitInfo.REASON_EXIT_SELF:
+                return "REASON_EXIT_SELF: App called System.exit() or finished normally";
+            case ApplicationExitInfo.REASON_INITIALIZATION_FAILURE:
+                return "REASON_INITIALIZATION_FAILURE: App failed to initialise";
+            case ApplicationExitInfo.REASON_LOW_MEMORY:
+                return "REASON_LOW_MEMORY: OS killed app to free RAM";
+            case ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE:
+                return "REASON_PACKAGE_STATE_CHANGE: Package was disabled or changed";
+            case ApplicationExitInfo.REASON_PACKAGE_UPDATED:
+                return "REASON_PACKAGE_UPDATED: App was updated";
+            case ApplicationExitInfo.REASON_PERMISSION_CHANGE:
+                return "REASON_PERMISSION_CHANGE: App permissions were revoked or changed";
+            case ApplicationExitInfo.REASON_SIGNALED:
+                return "REASON_SIGNALED: Killed by OS signal (SIGKILL/SIGTERM)";
+            case ApplicationExitInfo.REASON_USER_REQUESTED:
+                return "REASON_USER_REQUESTED: User force-stopped or swiped from recents";
+            case ApplicationExitInfo.REASON_UNKNOWN:
+                return "REASON_UNKNOWN: Exit reason could not be determined";
+            default:
+                return "REASON_CODE_" + reason + ": Unrecognised exit reason";
+        }
+    }
+
+    /**
+     * Extracts meaningful crash info from ApplicationExitInfo trace:
+     * - REASON_CRASH: exception class + message + first frame in our package
+     * - REASON_ANR / others: first 8 non-empty lines of the trace
+     */
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private String extractCrashInfo(ApplicationExitInfo info) {
+        InputStream is = null;
+        try {
+            is = info.getTraceInputStream();
+            if (is == null) return "(no trace available)";
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+            String line;
+
+            if (info.getReason() == ApplicationExitInfo.REASON_CRASH) {
+                // Extract: exception type+message + first frame inside our package
+                String exceptionLine = null;
+                String ourFrame = null;
+                while ((line = reader.readLine()) != null) {
+                    // Exception line: not a header, not a stack frame (no leading tab)
+                    if (exceptionLine == null
+                            && !line.startsWith("FATAL EXCEPTION")
+                            && !line.startsWith("Process:")
+                            && !line.startsWith("PID:")
+                            && !line.startsWith("\t")
+                            && (line.contains("Exception") || line.contains("Error"))) {
+                        exceptionLine = line.trim();
+                    }
+                    // First frame that points at our own code
+                    if (ourFrame == null && line.contains("com.example.a_track")) {
+                        ourFrame = line.trim();
+                    }
+                    if (exceptionLine != null && ourFrame != null) break;
+                }
+                StringBuilder sb = new StringBuilder();
+                if (exceptionLine != null) sb.append(exceptionLine);
+                if (ourFrame != null) {
+                    if (sb.length() > 0) sb.append(" | ");
+                    sb.append(ourFrame);
+                }
+                return sb.length() > 0 ? sb.toString() : "(exception info not found in trace)";
+
+            } else {
+                // ANR / CRASH_NATIVE / INIT_FAILURE — first 8 non-empty lines
+                StringBuilder sb = new StringBuilder();
+                int count = 0;
+                while ((line = reader.readLine()) != null && count < 8) {
+                    if (!line.isEmpty()) {
+                        if (sb.length() > 0) sb.append("\n");
+                        sb.append(line.trim());
+                        count++;
+                    }
+                }
+                return sb.length() > 0 ? sb.toString() : "(no trace available)";
+            }
+        } catch (IOException e) {
+            Log.w(TAG, "Could not read crash trace: " + e.getMessage());
+            return "(trace read error)";
+        } finally {
+            if (is != null) {
+                try { is.close(); } catch (IOException ignored) {}
+            }
+        }
     }
 
     private void createNotificationChannel() {
@@ -321,17 +526,23 @@ public class LocationTrackingService extends Service {
         }
 
         fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
-            if (location != null) {
+            // Treat (0,0) the same as null — FusedLocationProvider can return a
+            // "Null Island" location object with lat=0.0/lng=0.0 when its cache is
+            // cold (e.g. first save right after login before GPS has a real fix).
+            boolean locationValid = location != null
+                    && (location.getLatitude() != 0.0 || location.getLongitude() != 0.0);
+
+            if (locationValid) {
                 Log.d(TAG, "Fetched location for time-based save: Lat=" + location.getLatitude() +
                         ", Lng=" + location.getLongitude());
                 saveLocationToDatabase(location);
                 lastLocation = location;
             } else {
-                Log.w(TAG, "Location is null, using last known location");
+                Log.w(TAG, "Location is null or (0,0) — using last known location");
                 if (lastLocation != null) {
                     saveLocationToDatabase(lastLocation);
                 } else {
-                    Log.e(TAG, "No location available to save");
+                    Log.e(TAG, "No location available to save — skipping this cycle");
                 }
             }
         }).addOnFailureListener(e -> {
@@ -401,6 +612,64 @@ public class LocationTrackingService extends Service {
         // Move database operations to background thread
         executorService.execute(() -> {
             try {
+                // ── Flush pending kill record with real GPS coordinates ──────────
+                if (pendingKillReason != null) {
+                    try {
+                        int killLastRecNo = sessionManager.getLastRecNo();
+                        if (killLastRecNo == 0) {
+                            killLastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                        }
+                        int killRecNo = killLastRecNo + 1;
+
+                        LocationTrack killRecord = new LocationTrack(
+                                mobileNumber,
+                                locationToSave.getLatitude(),
+                                locationToSave.getLongitude(),
+                                0f,
+                                locationToSave.getBearing(),
+                                pendingKillTime,
+                                sessionId,
+                                battery,
+                                null, null,
+                                pendingKillReason + " | " + getDeviceHealthString(mobileNumber),
+                                deviceInfo.getGpsState(),
+                                deviceInfo.getInternetState(),
+                                deviceInfo.getFlightState(),
+                                deviceInfo.getRoamingState(),
+                                deviceInfo.getIsNetThere(),
+                                deviceInfo.getIsNwThere(),
+                                deviceInfo.getIsMoving(0f),
+                                deviceInfo.getModelNo(),
+                                deviceInfo.getModelOS(),
+                                deviceInfo.getApkName(),
+                                deviceInfo.getImsiNo(),
+                                mobileTime,
+                                nss,
+                                killRecNo,
+                                DataTypes.APP_KILL
+                        );
+                        db.locationTrackDao().insert(killRecord);
+                        sessionManager.saveLastRecNo(killRecNo);
+                        // Mark fully saved: write the timestamp guard and clear the
+                        // persisted pending reason so it isn't retried on next restart
+                        getSharedPreferences("KillLog", MODE_PRIVATE)
+                                .edit()
+                                .putLong("last_logged_kill_time", pendingKillTime)
+                                .remove("pending_kill_reason")
+                                .remove("pending_kill_time")
+                                .apply();
+                        Log.d(TAG, "✓ Kill record saved with real GPS: " + pendingKillReason);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error saving kill record: " + e.getMessage());
+                        // Do NOT clear pending_kill_reason on failure — it will be retried
+                        // on the next service start via the SharedPrefs restore in logPreviousExitReason()
+                    } finally {
+                        pendingKillReason = null;
+                        pendingKillTime   = 0;
+                    }
+                }
+                // ────────────────────────────────────────────────────────────────
+
                 int lastRecNo = sessionManager.getLastRecNo();
                 if (lastRecNo == 0) {
                     // Fallback to DB on first run or after data clear
@@ -419,7 +688,7 @@ public class LocationTrackingService extends Service {
                         battery,
                         null,  // photoPath
                         null,  // videoPath
-                        null,  // textMsg
+                        getDeviceHealthString(mobileNumber),  // textMsg
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
                         deviceInfo.getFlightState(),
@@ -509,6 +778,76 @@ public class LocationTrackingService extends Service {
             case DataTypes.ALARM_MISSED: return "Alarm Missed";
             default:                     return "Unknown";
         }
+    }
+
+    /**
+     * Builds the standard health-status string appended to every record's TextMsg.
+     * Format (fixed order):
+     *   Loc:[Ok|NA], Net:[Ok|NA], Q:[n], BatOpt:[Yes|No], PlayPro:[On|Off], BkUsg:[Allowed|NA], Notif:[On|Off]
+     *
+     * MUST be called on a background thread — performs a synchronous DB query for Q.
+     */
+    private String getDeviceHealthString(String mobileNumber) {
+        DeviceInfoHelper di = new DeviceInfoHelper(this);
+
+        // Loc
+        String loc = "1".equals(di.getGpsState()) ? "Ok" : "NA";
+
+        // Net
+        String net = "1".equals(di.getInternetState()) ? "Ok" : "NA";
+
+        // Q — unsynced record count
+        int q = 0;
+        try {
+            if (mobileNumber != null) {
+                q = db.locationTrackDao().getUnsyncedCount(mobileNumber);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "getDeviceHealthString: Q count error: " + e.getMessage());
+        }
+
+        // BatOpt — "Yes" = optimised (bad), "No" = exempted (good)
+        String batOpt = "No";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                batOpt = "Yes";
+            }
+        }
+
+        // PlayPro
+        String playPro = "Off";
+        try {
+            int ve = Settings.Global.getInt(getContentResolver(), "package_verifier_enable", 1);
+            int uc = Settings.Global.getInt(getContentResolver(), "package_verifier_user_consent", 1);
+            playPro = (ve == 1 && uc != -1) ? "On" : "Off";
+        } catch (Exception e) {
+            Log.w(TAG, "getDeviceHealthString: PlayPro check error: " + e.getMessage());
+        }
+
+        // BkUsg — "NA" = background data blocked
+        String bkUsg = "Allowed";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && cm.getRestrictBackgroundStatus()
+                    == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED) {
+                bkUsg = "NA";
+            }
+        }
+
+        // Notif
+        String notif = "On";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notif = (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED) ? "On" : "Off";
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            notif = (nm != null && nm.areNotificationsEnabled()) ? "On" : "Off";
+        }
+
+        return "Loc:" + loc + ", Net:" + net + ", Q:" + q
+                + ", BatOpt:" + batOpt + ", PlayPro:" + playPro
+                + ", BkUsg:" + bkUsg + ", Notif:" + notif;
     }
 
     private void syncDataToServer() {
@@ -1016,6 +1355,11 @@ public class LocationTrackingService extends Service {
 
     private void saveAlarmDismissed() {
         android.content.SharedPreferences prefs = getSharedPreferences("AlarmGuard", MODE_PRIVATE);
+        if (prefs.getBoolean("health_alert_saved", false)) {
+            // Flag 100 was already saved for this alarm cycle — do not also save flag 71
+            Log.d(TAG, "Health alert already saved this cycle — skipping ALARM_MISSED (71)");
+            return;
+        }
         if (prefs.getBoolean("alarm_missed_saved", false)) {
             Log.d(TAG, "⚠️ Flag 71 already saved for this alarm cycle - skipping duplicate");
             return;
@@ -1039,11 +1383,13 @@ public class LocationTrackingService extends Service {
                 DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
                 int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
 
+                String textMsg = "ALARM_MISS:30 | " + getDeviceHealthString(mobileNumber);
+
                 LocationTrack track = new LocationTrack(
                         mobileNumber, lat, lng, speed, angle,
                         sessionManager.getTrueTimeMs(), sessionId,
                         getBatteryLevel(), null, null,
-                        "ALARM_MISS:30",
+                        textMsg,
                         deviceInfo.getGpsState(), deviceInfo.getInternetState(),
                         deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
                         deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),

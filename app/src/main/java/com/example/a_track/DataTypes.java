@@ -12,4 +12,6 @@ public final class DataTypes {
     public static final int VIDEO        = 60;  // Video recorded and saved
     public static final int ALARM_ACK    = 70;  // Alarm acknowledged (All OK pressed)
     public static final int ALARM_MISSED = 71;  // Alarm dismissed or timed out
+    public static final int APP_KILL     = 99;  // App was killed/crashed — reason logged in textMsg
+    public static final int HEALTH_ALERT = 100; // One or more health parameters disturbed at alarm time
 }
