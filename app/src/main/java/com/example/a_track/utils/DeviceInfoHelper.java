@@ -33,8 +33,115 @@ import android.telephony.CellInfoNr;
 import android.telephony.CellSignalStrengthNr;
 
 import com.example.a_track.R;
+import com.example.a_track.database.AppDatabase;
 
 public class DeviceInfoHelper {
+
+    // ── Static helpers (no instance required) ────────────────────────────────
+
+    /**
+     * Returns true if the app holds background ("All the time") location access.
+     *   Android 10+ (API 29+) — ACCESS_BACKGROUND_LOCATION must be granted.
+     *   Android 9  and below — ACCESS_FINE_LOCATION is sufficient; background
+     *                          access is implicit when FINE is granted.
+     */
+    public static boolean hasAllTheTimeLocationPermission(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return context.checkSelfPermission(
+                    android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+        } else {
+            return context.checkSelfPermission(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+        }
+    }
+
+    /**
+     * Builds the standard device-health string written to the textMsg DB column.
+     *
+     * Format (fixed order):
+     *   Loc:[Ok|NA], Net:[Ok|NA], Q:[n], BatOpt:[Yes|No],
+     *   PlayPro:[On|Off], BkUsg:[Allowed|NA], Notif:[On|Off]
+     *
+     * IMPORTANT: contains a synchronous Room query (Q count).
+     * Always call from a background thread.
+     */
+    public static String getDeviceHealthString(Context context) {
+        // Loc — GPS hardware on/off
+        DeviceInfoHelper di = new DeviceInfoHelper(context);
+        String loc = "1".equals(di.getGpsState()) ? "Ok" : "NA";
+
+        // BgLoc — background "All the time" location permission
+        String bgLoc = hasAllTheTimeLocationPermission(context) ? "Ok" : "NA";
+
+        // Net
+        String net = "1".equals(di.getInternetState()) ? "Ok" : "NA";
+
+        // Q — unsynced record count (synchronous DB read, background thread only)
+        int q = 0;
+        try {
+            SessionManager sm = new SessionManager(context);
+            String mobile = sm.getMobileNumber();
+            if (mobile != null) {
+                q = AppDatabase.getInstance(context)
+                        .locationTrackDao().getUnsyncedCount(mobile);
+            }
+        } catch (Exception e) {
+            Log.w("DeviceInfoHelper", "getDeviceHealthString: Q count error: " + e.getMessage());
+        }
+
+        // BatOpt — "Yes" = optimised (bad), "No" = exempted (good)
+        String batOpt = "No";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.os.PowerManager pm =
+                    (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(context.getPackageName())) {
+                batOpt = "Yes";
+            }
+        }
+
+        // PlayPro
+        String playPro = "Off";
+        try {
+            int ve = Settings.Global.getInt(
+                    context.getContentResolver(), "package_verifier_enable", 1);
+            int uc = Settings.Global.getInt(
+                    context.getContentResolver(), "package_verifier_user_consent", 1);
+            playPro = (ve == 1 && uc != -1) ? "On" : "Off";
+        } catch (Exception e) {
+            Log.w("DeviceInfoHelper", "getDeviceHealthString: PlayPro check error: " + e.getMessage());
+        }
+
+        // BkUsg — "NA" = background data blocked
+        String bkUsg = "Allowed";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ConnectivityManager cm =
+                    (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && cm.getRestrictBackgroundStatus()
+                    == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED) {
+                bkUsg = "NA";
+            }
+        }
+
+        // Notif
+        String notif = "On";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notif = (context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED) ? "On" : "Off";
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            android.app.NotificationManager nm =
+                    (android.app.NotificationManager) context.getSystemService(
+                            Context.NOTIFICATION_SERVICE);
+            notif = (nm != null && nm.areNotificationsEnabled()) ? "On" : "Off";
+        }
+
+        return "Loc:" + loc + ", BgLoc:" + bgLoc + ", Net:" + net + ", Q:" + q
+                + ", BatOpt:" + batOpt + ", PlayPro:" + playPro
+                + ", BkUsg:" + bkUsg + ", Notif:" + notif;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     private Context context;
 
