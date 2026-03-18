@@ -42,6 +42,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
     // Health check views
     private LinearLayout layoutDialogCard;
     private TextView tvLocationStatus;
+    private TextView tvBgLocStatus;
     private TextView tvInternetStatus;
     private TextView tvQCount;
     private TextView tvBatteryOptimized;
@@ -52,6 +53,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
     // Health status flags — set in loadSystemHealth(), read by applyConditionalUi()
     // and getHealthStatusString()
     private boolean healthLocationOk      = true;
+    private boolean healthBgLocOk         = true;
     private boolean healthInternetOk      = true;
     private boolean healthBatIssue        = false;
     private boolean healthPlayProtectOn   = false;
@@ -116,6 +118,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
 
         layoutDialogCard = findViewById(R.id.layoutDialogCard);
         tvLocationStatus = findViewById(R.id.tvLocationStatus);
+        tvBgLocStatus    = findViewById(R.id.tvBgLocStatus);
         tvInternetStatus = findViewById(R.id.tvInternetStatus);
         tvQCount = findViewById(R.id.tvQCount);
         tvBatteryOptimized = findViewById(R.id.tvBatteryOptimized);
@@ -129,9 +132,13 @@ public class AlarmDialogActivity extends AppCompatActivity {
     private void loadSystemHealth() {
         DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
 
-        // --- Location ---
+        // --- Location (GPS hardware on/off) ---
         healthLocationOk = "1".equals(deviceInfo.getGpsState());
         tvLocationStatus.setText(healthLocationOk ? "Available" : "NA");
+
+        // --- BG Location ("All the time" background permission) ---
+        healthBgLocOk = DeviceInfoHelper.hasAllTheTimeLocationPermission(this);
+        tvBgLocStatus.setText(healthBgLocOk ? "Allowed" : "NA");
 
         // --- Internet ---
         healthInternetOk = "1".equals(deviceInfo.getInternetState());
@@ -214,6 +221,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
      */
     private void applyConditionalUi() {
         boolean anyIssue = !healthLocationOk
+                || !healthBgLocOk
                 || !healthInternetOk
                 || healthQCount > 30
                 || healthBatIssue
@@ -323,6 +331,7 @@ public class AlarmDialogActivity extends AppCompatActivity {
      */
     private String getHealthStatusString() {
         return "Loc:" + (healthLocationOk ? "Ok" : "NA")
+                + ", BgLoc:" + (healthBgLocOk ? "Ok" : "NA")
                 + ", Net:" + (healthInternetOk ? "Ok" : "NA")
                 + ", Q:" + healthQCount
                 + ", BatOpt:" + (healthBatIssue ? "Yes" : "No")

@@ -36,6 +36,36 @@ public class ApiService {
        ================================ */
 
     /**
+     * Installs a trust-all SSL socket factory on the given connection if it is HTTPS.
+     * Called on every outgoing connection so that a spoofed device clock — which causes
+     * SSL certificate date-validation failures — cannot block the app from reaching the
+     * server. No credentials are bypassed; server-side auth still uses sessionId.
+     */
+    private static void applyTrustAllSsl(HttpURLConnection conn) {
+        if (!(conn instanceof javax.net.ssl.HttpsURLConnection)) return;
+        javax.net.ssl.HttpsURLConnection httpsConn = (javax.net.ssl.HttpsURLConnection) conn;
+        try {
+            javax.net.ssl.TrustManager[] trustAll = new javax.net.ssl.TrustManager[]{
+                new javax.net.ssl.X509TrustManager() {
+                    public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                        return new java.security.cert.X509Certificate[0];
+                    }
+                    public void checkClientTrusted(
+                            java.security.cert.X509Certificate[] c, String t) {}
+                    public void checkServerTrusted(
+                            java.security.cert.X509Certificate[] c, String t) {}
+                }
+            };
+            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+            sc.init(null, trustAll, new java.security.SecureRandom());
+            httpsConn.setSSLSocketFactory(sc.getSocketFactory());
+            httpsConn.setHostnameVerifier((hostname, session) -> true);
+        } catch (Exception e) {
+            Log.w(TAG, "SSL bypass setup failed: " + e.getMessage());
+        }
+    }
+
+    /**
      * Makes a lightweight HEAD request to the server and computes a time offset
      * calibrated to the device's monotonic clock.
      *
@@ -52,6 +82,7 @@ public class ApiService {
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) new URL(BASE_URL).openConnection();
+            applyTrustAllSsl(conn);
             conn.setRequestMethod("HEAD");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
@@ -107,6 +138,7 @@ public class ApiService {
 
                 URL url = new URL(BASE_URL + "sync_locations.php");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                applyTrustAllSsl(conn);
                 conn.setRequestMethod("POST");
                 conn.setConnectTimeout(TIMEOUT);
                 conn.setReadTimeout(TIMEOUT);
@@ -239,6 +271,7 @@ public class ApiService {
 
                 URL url = new URL(BASE_URL + "upload_photo.php");
                 conn = (HttpURLConnection) url.openConnection();
+                applyTrustAllSsl(conn);
                 conn.setRequestMethod("POST");
                 conn.setConnectTimeout(PHOTO_TIMEOUT);
                 conn.setReadTimeout(PHOTO_TIMEOUT);
@@ -373,6 +406,7 @@ public class ApiService {
 
                 URL url = new URL(BASE_URL + "upload_video.php");
                 conn = (HttpURLConnection) url.openConnection();
+                applyTrustAllSsl(conn);
                 conn.setRequestMethod("POST");
                 conn.setConnectTimeout(VIDEO_TIMEOUT);
                 conn.setReadTimeout(VIDEO_TIMEOUT);

@@ -623,8 +623,9 @@ public class CameraActivity extends AppCompatActivity {
     private String getDeviceHealthString(String mobileNumber) {
         DeviceInfoHelper di = new DeviceInfoHelper(this);
 
-        String loc = "1".equals(di.getGpsState()) ? "Ok" : "NA";
-        String net = "1".equals(di.getInternetState()) ? "Ok" : "NA";
+        String loc   = "1".equals(di.getGpsState()) ? "Ok" : "NA";
+        String bgLoc = DeviceInfoHelper.hasAllTheTimeLocationPermission(this) ? "Ok" : "NA";
+        String net   = "1".equals(di.getInternetState()) ? "Ok" : "NA";
 
         int q = 0;
         try {
@@ -670,7 +671,7 @@ public class CameraActivity extends AppCompatActivity {
             notif = (nm != null && nm.areNotificationsEnabled()) ? "On" : "Off";
         }
 
-        return "Loc:" + loc + ", Net:" + net + ", Q:" + q
+        return "Loc:" + loc + ", BgLoc:" + bgLoc + ", Net:" + net + ", Q:" + q
                 + ", BatOpt:" + batOpt + ", PlayPro:" + playPro
                 + ", BkUsg:" + bkUsg + ", Notif:" + notif;
     }
