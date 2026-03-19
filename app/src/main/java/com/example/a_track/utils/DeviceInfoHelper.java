@@ -312,7 +312,9 @@ public class DeviceInfoHelper {
     @SuppressLint("RestrictedApi")
     public String getApkName() {
         try {
-            return context.getString(R.string.app_name);
+            String appName = context.getString(R.string.app_name);
+            String version = getAppVersion();
+            return appName + " " + version;
         } catch (Exception e) {
             Log.e(TAG, "Error getting app name: " + e.getMessage());
             return "Unknown";
