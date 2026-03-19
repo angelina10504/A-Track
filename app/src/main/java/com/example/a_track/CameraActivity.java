@@ -58,7 +58,6 @@ import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
-import java.util.TimeZone;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -463,35 +462,6 @@ public class CameraActivity extends AppCompatActivity {
                         Toast.LENGTH_SHORT).show();
             });
         }).start();
-    }
-
-    // ✅ Helper: handle successful compression
-    private void handleCompressionSuccess(File originalFile, File tempFile, long originalKB) {
-        long compressedKB = tempFile.exists() ? tempFile.length() / 1024 : 0;
-        Log.d(TAG, "✓ Compressed: " + originalKB + "KB → " + compressedKB + "KB");
-
-        originalFile.delete();
-        boolean renamed = tempFile.renameTo(originalFile);
-        File finalFile = renamed ? originalFile : tempFile;
-
-        runOnUiThread(() -> {
-            capturedVideoFile = finalFile;
-            showVideoPreview(finalFile);
-            Toast.makeText(this,
-                    "Video ready! (" + compressedKB + " KB)",
-                    Toast.LENGTH_SHORT).show();
-        });
-    }
-
-    // ✅ Helper: handle failed compression
-    private void handleCompressionFailure(File originalFile, long fileSizeKB) {
-        runOnUiThread(() -> {
-            capturedVideoFile = originalFile;
-            showVideoPreview(originalFile);
-            Toast.makeText(this,
-                    "Video recorded! (" + fileSizeKB + " KB)",
-                    Toast.LENGTH_SHORT).show();
-        });
     }
 
     private void stopVideoRecording() {

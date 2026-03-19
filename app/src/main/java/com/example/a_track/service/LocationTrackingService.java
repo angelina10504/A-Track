@@ -1198,18 +1198,36 @@ public class LocationTrackingService extends Service {
 
         AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            // setAlarmClock fires even in Doze and needs no SCHEDULE_EXACT_ALARM permission
-            Log.w(TAG, "✗ SCHEDULE_EXACT_ALARM not granted - using setAlarmClock() fallback");
-            AlarmManager.AlarmClockInfo clockInfo =
-                    new AlarmManager.AlarmClockInfo(triggerTime, pendingIntent);
-            alarmManager.setAlarmClock(clockInfo, pendingIntent);
-            Log.d(TAG, "✓ Alarm clock scheduled (Doze-safe fallback)");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (alarmManager.canScheduleExactAlarms()) {
+                // Permission granted — use exact Doze-safe alarm, with try-catch for OEM quirks
+                try {
+                    alarmManager.setExactAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
+                    );
+                    Log.d(TAG, "✓ Exact alarm scheduled (setExactAndAllowWhileIdle)");
+                } catch (SecurityException e) {
+                    // Some OEMs revoke the permission mid-flight despite canScheduleExactAlarms() returning true
+                    Log.e(TAG, "SecurityException on exact alarm, using inexact fallback: " + e.getMessage());
+                    alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
+                    );
+                    Log.d(TAG, "✓ Inexact alarm scheduled (setAndAllowWhileIdle OEM fallback)");
+                }
+            } else {
+                // Permission denied — setAndAllowWhileIdle() requires NO special permission and will not crash
+                Log.w(TAG, "✗ SCHEDULE_EXACT_ALARM not granted - using setAndAllowWhileIdle() fallback");
+                alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
+                );
+                Log.d(TAG, "✓ Inexact alarm scheduled (setAndAllowWhileIdle)");
+            }
         } else {
+            // API < 31: setExactAndAllowWhileIdle() requires no special permission
             alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
             );
-            Log.d(TAG, "✓ Exact alarm scheduled");
+            Log.d(TAG, "✓ Exact alarm scheduled (API < S, no permission required)");
         }
 
         Log.d(TAG, "✓ Alarm scheduled via BroadcastReceiver");

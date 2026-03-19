@@ -26,7 +26,7 @@ public class LoginActivity extends AppCompatActivity {
 
     private TextInputEditText etMobileNumber, etPassword;
     private Button btnLogin;
-    private TextView tvCreateAccount, tvForgotPassword, tvViewUsers;
+    private TextView tvCreateAccount, tvForgotPassword;
     private SessionManager sessionManager;
     private AppDatabase db;
     private ExecutorService executorService;

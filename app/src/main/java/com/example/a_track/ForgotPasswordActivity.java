@@ -4,7 +4,6 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.CountDownTimer;
-import android.telephony.SmsManager;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.Button;
@@ -134,46 +133,6 @@ public class ForgotPasswordActivity extends AppCompatActivity {
         Random random = new Random();
         int otp = 100000 + random.nextInt(900000); // 6-digit OTP
         return String.valueOf(otp);
-    }
-
-    private boolean sendSmsOtp(String phoneNumber, String otp) {
-        try {
-            // Check if SMS permission is granted
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "SMS permission not granted", Toast.LENGTH_SHORT).show();
-                return false;
-            }
-
-            SmsManager smsManager = SmsManager.getDefault();
-            String message = "Your A-Track password reset OTP is: " + otp +
-                    ". Valid for 5 minutes. Do not share this OTP with anyone.";
-
-            // Add +91 country code if not present
-            String fullNumber = phoneNumber;
-            if (!phoneNumber.startsWith("+")) {
-                fullNumber = "+91" + phoneNumber;
-            }
-
-            // For testing: Also show OTP in Toast as backup
-            Toast.makeText(this, "Sending OTP " + otp + " to " + fullNumber, Toast.LENGTH_LONG).show();
-
-            // Send SMS
-            smsManager.sendTextMessage(fullNumber, null, message, null, null);
-
-            android.util.Log.d("SMS", "OTP SMS sent successfully to: " + fullNumber);
-            return true;
-
-        } catch (SecurityException se) {
-            android.util.Log.e("SMS", "Security Exception: " + se.getMessage());
-            Toast.makeText(this, "Permission denied. OTP: " + otp, Toast.LENGTH_LONG).show();
-            return false;
-        } catch (Exception e) {
-            android.util.Log.e("SMS", "Failed to send SMS: " + e.getMessage());
-            e.printStackTrace();
-            Toast.makeText(this, "SMS failed. OTP: " + otp + " (Use this to verify)", Toast.LENGTH_LONG).show();
-            return false;
-        }
     }
 
     private void startTimer() {
