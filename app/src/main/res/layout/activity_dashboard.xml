@@ -165,7 +165,7 @@
                 android:id="@+id/btnTakePhoto"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="📷 camera"
+                android:text="📷 Camera"
                 android:layout_marginBottom="8dp"
                 android:backgroundTint="#2C2831"
                 android:textColor="@color/white"/>

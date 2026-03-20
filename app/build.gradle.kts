@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.a_track"
+    namespace = "com.rdxindia.ihbl.routrack"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.a_track"
+        applicationId = "com.rdxindia.ihbl.routrack"
         minSdk = 29
         targetSdk = 35
         versionCode = 1
