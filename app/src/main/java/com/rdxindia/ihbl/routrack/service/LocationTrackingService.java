@@ -52,6 +52,7 @@ import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 import com.rdxindia.ihbl.routrack.workers.ServiceWatchdogWorker;
+import com.rdxindia.ihbl.routrack.utils.NetworkMonitor;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -113,6 +114,8 @@ public class LocationTrackingService extends Service {
     private volatile String pendingKillReason = null;
     private volatile long   pendingKillTime   = 0;
 
+    private NetworkMonitor networkMonitor;
+
     private final IBinder binder = new LocalBinder();
 
     public class LocalBinder extends Binder {
@@ -135,6 +138,9 @@ public class LocationTrackingService extends Service {
         db = AppDatabase.getInstance(this);
         sessionManager = new SessionManager(this);
         executorService = Executors.newSingleThreadExecutor();
+
+        networkMonitor = new NetworkMonitor(this, sessionManager, this::stopSelf);
+        networkMonitor.register();
         handler = new Handler(Looper.getMainLooper());
         random = new Random(); // must be initialized before startPeriodicSync()
 
@@ -798,6 +804,16 @@ public class LocationTrackingService extends Service {
     }
 
     private void syncDataToServer() {
+        String verificationStatus = sessionManager.getVerificationStatus();
+        if (SessionManager.STATUS_PENDING.equals(verificationStatus)) {
+            Log.d(TAG, "Sync skipped - awaiting verification");
+            return;
+        }
+        if (SessionManager.STATUS_REJECTED.equals(verificationStatus)) {
+            stopSelf();
+            return;
+        }
+
         String mobile = sessionManager.getMobileNumber();
         if (mobile == null) return;
 
@@ -1379,6 +1395,8 @@ public class LocationTrackingService extends Service {
         super.onDestroy();
 
         isRunning = false;
+
+        if (networkMonitor != null) networkMonitor.unregister();
         Log.d(TAG, "Service onDestroy - Stopping location tracking");
 
         hasLoggedInstallReboot = false;

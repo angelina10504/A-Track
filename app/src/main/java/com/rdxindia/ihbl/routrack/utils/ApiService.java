@@ -111,6 +111,114 @@ public class ApiService {
     }
 
     /* ================================
+       CHECK MOBILE REGISTERED
+       ================================ */
+
+    public interface MobileCheckCallback {
+        void onRegistered();
+        void onNotRegistered(String reason);
+        void onNetworkError();
+    }
+
+    public static void checkMobileRegistered(String mobile, MobileCheckCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(BASE_URL + "check_mobile.php");
+                conn = (HttpURLConnection) url.openConnection();
+                applyTrustAllSsl(conn);
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(TIMEOUT);
+                conn.setReadTimeout(TIMEOUT);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                String postData = "mobile_no=" + mobile;
+                conn.getOutputStream().write(postData.getBytes("UTF-8"));
+                conn.getOutputStream().flush();
+                conn.getOutputStream().close();
+
+                int code = conn.getResponseCode();
+                BufferedReader br = new BufferedReader(new InputStreamReader(
+                        code == 200 ? conn.getInputStream() : conn.getErrorStream()
+                ));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+
+                Log.d(TAG, "checkMobileRegistered response: " + sb);
+                JSONObject res = new JSONObject(sb.toString());
+                if (res.optBoolean("success")) {
+                    callback.onRegistered();
+                } else {
+                    callback.onNotRegistered(res.optString("message", "Mobile number not authorised"));
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "checkMobileRegistered error: " + e.getMessage());
+                callback.onNetworkError();
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
+
+    /* ================================
+       VERIFY ACTIVATION
+       ================================ */
+
+    public interface VerificationCallback {
+        void onVerified();
+        void onRejected(String reason);
+        void onNetworkError();
+    }
+
+    public static void verifyActivation(String mobile, String androidId,
+                                        boolean isReinstall, VerificationCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(BASE_URL + "verify_activation.php");
+                conn = (HttpURLConnection) url.openConnection();
+                applyTrustAllSsl(conn);
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(TIMEOUT);
+                conn.setReadTimeout(TIMEOUT);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                String postData = "mobile_no=" + mobile + "&android_id=" + androidId
+                        + "&is_reinstall=" + (isReinstall ? "1" : "0");
+                conn.getOutputStream().write(postData.getBytes("UTF-8"));
+                conn.getOutputStream().flush();
+                conn.getOutputStream().close();
+
+                int code = conn.getResponseCode();
+                BufferedReader br = new BufferedReader(new InputStreamReader(
+                        code == 200 ? conn.getInputStream() : conn.getErrorStream()
+                ));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+
+                Log.d(TAG, "verifyActivation response: " + sb);
+                JSONObject res = new JSONObject(sb.toString());
+                if (res.optBoolean("success")) {
+                    callback.onVerified();
+                } else {
+                    callback.onRejected(res.optString("message", "Authorization failed"));
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "verifyActivation error: " + e.getMessage());
+                callback.onNetworkError();
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
+
+    /* ================================
        SYNC LOCATIONS (JSON)
        ================================ */
 

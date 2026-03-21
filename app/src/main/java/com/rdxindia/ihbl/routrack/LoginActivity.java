@@ -1,6 +1,9 @@
 package com.rdxindia.ihbl.routrack;
 
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,6 +18,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.rdxindia.ihbl.routrack.database.AppDatabase;
 import com.rdxindia.ihbl.routrack.database.Session;
 import com.rdxindia.ihbl.routrack.database.User;
+import com.rdxindia.ihbl.routrack.utils.ApiService;
+import com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper;
 import com.rdxindia.ihbl.routrack.utils.SessionManager;
 import com.google.android.material.textfield.TextInputEditText;
 import java.util.UUID;
@@ -105,31 +110,83 @@ public class LoginActivity extends AppCompatActivity {
             User user = db.userDao().validateUser(mobile, password);
 
             runOnUiThread(() -> {
-                btnLogin.setEnabled(true);
+                if (user == null) {
+                    btnLogin.setEnabled(true);
+                    Toast.makeText(this, "Invalid credentials!", Toast.LENGTH_SHORT).show();
+                    return;
+                }
 
-                if (user != null) {
-                    // Create new session
-                    String sessionId = UUID.randomUUID().toString();
-                    Session session = new Session(mobile, sessionId, System.currentTimeMillis(), null);
+                String androidId = new DeviceInfoHelper(this).getImsiNo();
+                boolean isReinstall = sessionManager.isFirstRun();
 
-                    executorService.execute(() -> {
-                        long sessionDbId = db.sessionDao().insert(session);
+                if (isInternetAvailable()) {
+                    // Keep button disabled as loading indicator
+                    ApiService.verifyActivation(mobile, androidId, isReinstall,
+                            new ApiService.VerificationCallback() {
+                        @Override
+                        public void onVerified() {
+                            runOnUiThread(() -> {
+                                if (isReinstall) sessionManager.markFirstRunComplete();
+                                proceedWithLogin(mobile, SessionManager.STATUS_VERIFIED);
+                            });
+                        }
 
-                        runOnUiThread(() -> {
-                            sessionManager.createLoginSession(mobile, sessionId, (int) sessionDbId);
+                        @Override
+                        public void onRejected(String reason) {
+                            runOnUiThread(() -> {
+                                btnLogin.setEnabled(true);
+                                new AlertDialog.Builder(LoginActivity.this)
+                                        .setTitle("Access Denied")
+                                        .setMessage(reason)
+                                        .setPositiveButton("OK", null)
+                                        .show();
+                            });
+                        }
 
-                            // Request battery optimization exemption for alarms to work
-                            requestBatteryOptimization();
-
-                            Toast.makeText(LoginActivity.this, "Login successful!", Toast.LENGTH_SHORT).show();
-                            navigateToDashboard();
-                        });
+                        @Override
+                        public void onNetworkError() {
+                            runOnUiThread(() -> {
+                                proceedWithLogin(mobile, SessionManager.STATUS_PENDING);
+                                Toast.makeText(LoginActivity.this,
+                                        "No internet connection. Your account will be verified automatically when connected.",
+                                        Toast.LENGTH_LONG).show();
+                            });
+                        }
                     });
                 } else {
-                    Toast.makeText(this, "Invalid credentials!", Toast.LENGTH_SHORT).show();
+                    proceedWithLogin(mobile, SessionManager.STATUS_PENDING);
+                    Toast.makeText(this,
+                            "No internet connection. Your account will be verified automatically when connected.",
+                            Toast.LENGTH_LONG).show();
                 }
             });
         });
+    }
+
+    private void proceedWithLogin(String mobile, String verificationStatus) {
+        String sessionId = UUID.randomUUID().toString();
+        Session session = new Session(mobile, sessionId, System.currentTimeMillis(), null);
+
+        executorService.execute(() -> {
+            long sessionDbId = db.sessionDao().insert(session);
+
+            runOnUiThread(() -> {
+                sessionManager.createLoginSession(mobile, sessionId, (int) sessionDbId);
+                if (SessionManager.STATUS_VERIFIED.equals(verificationStatus)) {
+                    sessionManager.setVerificationStatus(SessionManager.STATUS_VERIFIED);
+                }
+                requestBatteryOptimization();
+                Toast.makeText(LoginActivity.this, "Login successful!", Toast.LENGTH_SHORT).show();
+                navigateToDashboard();
+            });
+        });
+    }
+
+    private boolean isInternetAvailable() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        NetworkInfo info = cm.getActiveNetworkInfo();
+        return info != null && info.isConnected();
     }
 
     private void requestBatteryOptimization() {
