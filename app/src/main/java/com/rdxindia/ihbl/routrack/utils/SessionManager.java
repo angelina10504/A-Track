@@ -22,6 +22,12 @@ public class SessionManager {
     private static final String KEY_INSTALL_LOGGED = "installLogged";
     private static final String KEY_LOGIN_LOGGED = "loginLogged";
 
+    // Verification
+    private static final String KEY_VERIFICATION_STATUS = "verificationStatus";
+    public static final String STATUS_VERIFIED = "VERIFIED";
+    public static final String STATUS_PENDING = "PENDING_VERIFICATION";
+    public static final String STATUS_REJECTED = "REJECTED";
+
     private SharedPreferences prefs;
     private SharedPreferences.Editor editor;
     private Context context;
@@ -58,6 +64,7 @@ public class SessionManager {
         editor.putLong(KEY_BOOT_TIME, bootTime);
         editor.putBoolean(KEY_LOGIN_LOGGED, !afterReboot); // false = reboot login, true = normal login
         editor.putBoolean(KEY_REBOOTED, false);            // consume the flag
+        editor.putString(KEY_VERIFICATION_STATUS, STATUS_PENDING);
         editor.commit();
 
         Log.d(TAG, "Login session created for: " + mobileNumber);
@@ -223,6 +230,22 @@ public class SessionManager {
     public void setRebootedFlag() {
         prefs.edit().putBoolean(KEY_REBOOTED, true).apply();
         Log.d(TAG, "Reboot flag set - next login will use datatype=REBOOT");
+    }
+
+    public void setVerificationStatus(String status) {
+        prefs.edit().putString(KEY_VERIFICATION_STATUS, status).apply();
+    }
+
+    public String getVerificationStatus() {
+        return prefs.getString(KEY_VERIFICATION_STATUS, STATUS_PENDING);
+    }
+
+    public boolean isVerified() {
+        return STATUS_VERIFIED.equals(getVerificationStatus());
+    }
+
+    public boolean isPendingVerification() {
+        return STATUS_PENDING.equals(getVerificationStatus());
     }
 
     public void logout() {
