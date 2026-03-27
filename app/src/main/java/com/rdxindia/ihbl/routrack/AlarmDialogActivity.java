@@ -274,8 +274,12 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 }
 
                 int battery = getBatteryLevel();
-                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                }
                 int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
 
                 String textMsg = "HEALTH_ALERT | " + getHealthStatusString();
 
@@ -495,8 +499,12 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 }
 
                 int battery = getBatteryLevel();
-                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                }
                 int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
 
                 String textMsg = (datatype == DataTypes.ALARM_ACK) ?
                         "ALARM_ACK:" + responseTime :

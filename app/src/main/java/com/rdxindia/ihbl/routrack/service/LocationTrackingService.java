@@ -455,8 +455,17 @@ public class LocationTrackingService extends Service {
 
     private boolean isNetworkAvailable() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        NetworkInfo networkInfo = cm.getActiveNetworkInfo();
-        return networkInfo != null && networkInfo.isConnected();
+        if (cm == null) return false;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.net.Network activeNetwork = cm.getActiveNetwork();
+            if (activeNetwork == null) return false;
+            android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(activeNetwork);
+            return caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } else {
+            NetworkInfo networkInfo = cm.getActiveNetworkInfo();
+            return networkInfo != null && networkInfo.isConnected();
+        }
     }
 
     private void fetchAndSaveLocation() {
@@ -1362,7 +1371,12 @@ public class LocationTrackingService extends Service {
                 float angle = lastTrack != null ? lastTrack.getAngle() : 0.0f;
 
                 DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
-                int lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                }
+                int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
 
                 String textMsg = "ALARM_MISS:30 | " + getDeviceHealthString(mobileNumber);
 
@@ -1378,7 +1392,7 @@ public class LocationTrackingService extends Service {
                         deviceInfo.getModelOS(), deviceInfo.getApkName(),
                         deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
                         deviceInfo.getNetworkSignalStrength(),
-                        lastRecNo + 1, DataTypes.ALARM_MISSED
+                        nextRecNo, DataTypes.ALARM_MISSED
                 );
 
                 db.locationTrackDao().insert(track);
