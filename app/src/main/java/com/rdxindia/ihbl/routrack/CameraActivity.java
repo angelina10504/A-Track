@@ -718,11 +718,11 @@ public class CameraActivity extends AppCompatActivity {
                 long recordId = db.locationTrackDao().insert(track);
                 track.setId((int) recordId);
 
+                // Update last tracked state so distance-based tracking resets its timers
+                sessionManager.saveLastTrackedLocation(latitude, longitude, System.currentTimeMillis());
+
                 Log.d(TAG, "✓ Photo record saved locally with ID: " + recordId + ", RecNo: " + nextRecNo);
                 Log.d(TAG, "✓ Photo will be synced by background service");
-
-                // ✅ REMOVED: Immediate upload
-                // Photo will sync later with all other location data
 
                 runOnUiThread(() -> {
                     Toast.makeText(CameraActivity.this,
@@ -812,6 +812,9 @@ public class CameraActivity extends AppCompatActivity {
                 // Save to local database
                 long recordId = db.locationTrackDao().insert(track);
                 track.setId((int) recordId);
+
+                // Update last tracked state so distance-based tracking resets its timers
+                sessionManager.saveLastTrackedLocation(latitude, longitude, System.currentTimeMillis());
 
                 Log.d(TAG, "✓ Video record saved locally with ID: " + recordId + ", RecNo: " + nextRecNo);
                 Log.d(TAG, "✓ Video will be synced by background service");

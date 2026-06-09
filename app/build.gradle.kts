@@ -10,8 +10,8 @@ android {
         applicationId = "com.rdxindia.ihbl.routrack"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "3.6"
+        versionCode = 2
+        versionName = "4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

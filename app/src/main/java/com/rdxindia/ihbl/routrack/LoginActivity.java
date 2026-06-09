@@ -31,7 +31,7 @@ public class LoginActivity extends AppCompatActivity {
 
     private TextInputEditText etMobileNumber, etPassword;
     private Button btnLogin;
-    private TextView tvCreateAccount, tvForgotPassword;
+    private TextView tvCreateAccount;
     private SessionManager sessionManager;
     private AppDatabase db;
     private ExecutorService executorService;
@@ -72,9 +72,6 @@ public class LoginActivity extends AppCompatActivity {
         tvCreateAccount.setOnClickListener(v -> {
             startActivity(new Intent(LoginActivity.this, RegisterActivity.class));
         });
-        tvForgotPassword.setOnClickListener(v -> {
-            startActivity(new Intent(LoginActivity.this, ForgotPasswordActivity.class));
-        });
     }
 
     private void initViews() {
@@ -82,7 +79,6 @@ public class LoginActivity extends AppCompatActivity {
         etPassword = findViewById(R.id.etPassword);
         btnLogin = findViewById(R.id.btnLogin);
         tvCreateAccount = findViewById(R.id.tvCreateAccount);
-        tvForgotPassword = findViewById(R.id.tvForgotPassword);
     }
 
     private void loginUser() {
