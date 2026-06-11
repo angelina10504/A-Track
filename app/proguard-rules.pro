@@ -35,12 +35,6 @@
 # Utils accessed reflectively or via API callbacks
 -keep class com.rdxindia.ihbl.routrack.utils.** { *; }
 
-# JavaMail
--keep class com.sun.mail.** { *; }
--keep class javax.mail.** { *; }
--dontwarn com.sun.mail.**
--dontwarn javax.mail.**
-
 # Google Play Services
 -keep class com.google.android.gms.** { *; }
 -dontwarn com.google.android.gms.**
