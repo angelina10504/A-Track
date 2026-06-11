@@ -31,6 +31,13 @@ import com.rdxindia.ihbl.routrack.workers.ServiceWatchdogWorker;
 import com.rdxindia.ihbl.routrack.database.LocationTrack;
 import com.rdxindia.ihbl.routrack.service.LocationTrackingService;
 import com.rdxindia.ihbl.routrack.utils.SessionManager;
+import com.rdxindia.ihbl.routrack.utils.LogCapture;
+import android.app.ProgressDialog;
+import android.content.ActivityNotFoundException;
+import android.content.SharedPreferences;
+import android.view.HapticFeedbackConstants;
+import androidx.core.content.FileProvider;
+import java.io.File;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
@@ -60,6 +67,7 @@ import java.util.concurrent.TimeUnit;
 public class DashboardActivity extends AppCompatActivity implements OnMapReadyCallback {
 
     private TextView tvUsername, tvLatitude, tvLongitude, tvSpeed, tvAngle, tvDateTime;
+    private TextView tvVersion;
     private RecyclerView rvRecentTracks;
     private Button btnFilterLocation, btnFilterSession, btnLogout, btnTakePhoto;
 
@@ -214,6 +222,18 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         btnFilterSession = findViewById(R.id.btnFilterSession);
         btnLogout = findViewById(R.id.btnLogout);
         btnTakePhoto = findViewById(R.id.btnTakePhoto);
+
+        // Hidden debug-log export: long-press the version label
+        tvVersion = findViewById(R.id.tvVersion);
+        if (tvVersion != null) {
+            tvVersion.setText("v" + BuildConfig.VERSION_NAME);
+            tvVersion.setOnLongClickListener(v -> {
+                v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                showLogExportDialog();
+                return true;
+            });
+        }
+        maybeShowLogHint();
     }
 
     private void setupRecyclerView() {
@@ -597,5 +617,82 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         intent.putExtra("angle", location.getBearing());
         intent.putExtra("dateTime", location.getTime());
         startActivity(intent);
+    }
+
+    // ─── Debug log export (hidden: long-press version label) ────────────────────
+
+    private void showLogExportDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Export Debug Logs")
+                .setMessage("Share app logs for debugging?")
+                .setPositiveButton("Share via WhatsApp", (d, w) -> exportAndShare("whatsapp"))
+                .setNeutralButton("Share via Email", (d, w) -> exportAndShare("email"))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void exportAndShare(String target) {
+        ProgressDialog progress = new ProgressDialog(this);
+        progress.setMessage("Capturing logs...");
+        progress.setCancelable(false);
+        progress.show();
+
+        new Thread(() -> {
+            File logFile = LogCapture.captureLogsToFile(this, sessionManager);
+            runOnUiThread(() -> {
+                if (progress.isShowing()) {
+                    progress.dismiss();
+                }
+                if (logFile == null) {
+                    Toast.makeText(this, "Failed to capture logs", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                shareLogFile(logFile, target);
+            });
+        }).start();
+    }
+
+    private void shareLogFile(File logFile, String target) {
+        String currentDate =
+                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
+        String mobile = sessionManager.getMobileNumber();
+
+        try {
+            Uri fileUri = FileProvider.getUriForFile(
+                    this, "com.rdxindia.ihbl.routrack.provider", logFile);
+
+            Intent intent = new Intent(Intent.ACTION_SEND);
+            intent.setType("text/plain");
+            intent.putExtra(Intent.EXTRA_STREAM, fileUri);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            intent.putExtra(Intent.EXTRA_SUBJECT,
+                    "ROU Track Logs - " + mobile + " - " + currentDate);
+            intent.putExtra(Intent.EXTRA_TEXT,
+                    "ROU Track debug logs attached.\n"
+                            + "Mobile: " + mobile + "\n"
+                            + "Date: " + currentDate);
+
+            if (target.equals("whatsapp")) {
+                intent.setPackage("com.whatsapp");
+                try {
+                    startActivity(intent);
+                } catch (ActivityNotFoundException e) {
+                    Toast.makeText(this, "WhatsApp not installed", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                startActivity(Intent.createChooser(intent, "Share logs via"));
+            }
+        } catch (Exception e) {
+            Log.e("DashboardActivity", "Failed to share logs: " + e.getMessage(), e);
+            Toast.makeText(this, "Failed to share logs", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void maybeShowLogHint() {
+        SharedPreferences prefs = getSharedPreferences("debug_prefs", MODE_PRIVATE);
+        if (!prefs.getBoolean("logHintShown", false)) {
+            Toast.makeText(this, "Long press version to export logs", Toast.LENGTH_LONG).show();
+            prefs.edit().putBoolean("logHintShown", true).apply();
+        }
     }
 }

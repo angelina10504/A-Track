@@ -18,7 +18,7 @@ import com.rdxindia.ihbl.routrack.adapter.TrackAdapter;
 import com.rdxindia.ihbl.routrack.database.AppDatabase;
 import com.rdxindia.ihbl.routrack.database.LocationTrack;
 import com.rdxindia.ihbl.routrack.utils.SessionManager;
-import com.rdxindia.ihbl.routrack.utils.EmailSender;
+import com.rdxindia.ihbl.routrack.utils.ApiService;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.List;
@@ -222,8 +222,6 @@ public class FilterLocationActivity extends AppCompatActivity {
 
 
     private void sendEmailWithCsv() {
-        String recipientEmail = "routrackemailreceiver@gmail.com";
-
         if (currentFilteredTracks == null || currentFilteredTracks.isEmpty()) {
             Toast.makeText(this, "No data to send. Please apply filter first.", Toast.LENGTH_SHORT).show();
             return;
@@ -256,18 +254,18 @@ public class FilterLocationActivity extends AppCompatActivity {
                 "Best regards,\n" +
                 "A-Track System";
 
-        // Send email in background
-        EmailSender.sendEmailWithAttachment(
-                recipientEmail,
+        // Send via server (server holds SMTP creds + recipient — no Gmail login on device)
+        ApiService.sendReportEmail(
+                mobile,
                 subject,
                 body,
                 csvFile,
-                new EmailSender.EmailCallback() {
+                new ApiService.ReportEmailCallback() {
                     @Override
                     public void onSuccess() {
                         runOnUiThread(() -> {
                             Toast.makeText(FilterLocationActivity.this,
-                                    "✓ Email sent successfully!",
+                                    "✓ Report sent successfully!",
                                     Toast.LENGTH_LONG).show();
                         });
                     }
@@ -276,7 +274,7 @@ public class FilterLocationActivity extends AppCompatActivity {
                     public void onFailure(String error) {
                         runOnUiThread(() -> {
                             Toast.makeText(FilterLocationActivity.this,
-                                    "✗ Failed to send email: " + error,
+                                    "✗ Failed to send report: " + error,
                                     Toast.LENGTH_LONG).show();
                         });
                     }
