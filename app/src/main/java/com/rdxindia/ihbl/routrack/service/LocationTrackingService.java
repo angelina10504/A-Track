@@ -70,7 +70,6 @@ public class LocationTrackingService extends Service {
     private static final String TAG = "LocationTrackingService";
     private static final String CHANNEL_ID = "LocationTrackingChannel";
     private static final int NOTIFICATION_ID = 1;
-    private static final long UPDATE_INTERVAL = 60000; // 1 minute
     public static boolean isRunning = false;
     private static final long SYNC_INTERVAL = 120000; // 2 minutes
 
@@ -92,12 +91,12 @@ public class LocationTrackingService extends Service {
     private Handler alarmHandler;
     private Handler healthCheckHandler;
     private Handler permissionCheckHandler;
-    private Runnable locationRunnable;
     private Runnable syncRunnable;
     private Runnable alarmRunnable;
     private Random random;
     private PowerManager.WakeLock wakeLock;
     private Location lastSavedLocation;
+    private long lastSavedTime = 0;
     private Location stationaryBaseLocation;
     private LocationListener gpsTimeListener;
     private int stationaryCount = 0;
@@ -105,6 +104,12 @@ public class LocationTrackingService extends Service {
     private static final float MIN_SPEED = 0.5f;
     private static final int MIN_ALARM_INTERVAL = 15 * 60 * 1000; // 15 minutes
     private static final int MAX_ALARM_INTERVAL = 25 * 60 * 1000; // 25 minutes
+
+    // Distance-based tracking thresholds
+    private static final float DISTANCE_THRESHOLD_METERS = 50.0f;
+    private static final long HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 min stationary heartbeat
+    private static final long SAFETY_NET_INTERVAL_MS = 15 * 60 * 1000; // 15 min force save
+    private static final float MOVING_SPEED_THRESHOLD = 0.5f; // m/s — below this = stationary
 
     // ✅ Track if we've already logged install/reboot for this session
 
@@ -139,6 +144,18 @@ public class LocationTrackingService extends Service {
         sessionManager = new SessionManager(this);
         executorService = Executors.newSingleThreadExecutor();
 
+        // Restore last tracked location from SharedPreferences (survives service kills)
+        long savedTime = sessionManager.getLastTrackedTime();
+        if (savedTime > 0) {
+            lastSavedLocation = new Location("");
+            lastSavedLocation.setLatitude(sessionManager.getLastTrackedLat());
+            lastSavedLocation.setLongitude(sessionManager.getLastTrackedLng());
+            lastSavedTime = savedTime;
+            Log.d(TAG, "Restored last tracked state: lat=" + lastSavedLocation.getLatitude()
+                    + ", lng=" + lastSavedLocation.getLongitude()
+                    + ", age=" + ((System.currentTimeMillis() - lastSavedTime) / 1000) + "s ago");
+        }
+
         networkMonitor = new NetworkMonitor(this, sessionManager, this::stopSelf);
         networkMonitor.register();
         handler = new Handler(Looper.getMainLooper());
@@ -169,7 +186,8 @@ public class LocationTrackingService extends Service {
             // Runs on main thread after server responds (or times out)
             setupLocationCallback();
             startLocationUpdates();
-            startPeriodicLocationFetch();
+            // NOTE: No startPeriodicLocationFetch() — location saves are now
+            // triggered by the callback using distance/heartbeat/safety-net logic.
         });
 
         scheduleNextAlarm();
@@ -385,10 +403,68 @@ public class LocationTrackingService extends Service {
                 }
 
                 for (Location location : locationResult.getLocations()) {
-                    if (location != null) {
-                        Log.d(TAG, "Location received: Lat=" + location.getLatitude() +
-                                ", Lng=" + location.getLongitude());
-                        lastLocation = location;
+                    if (location == null) continue;
+
+                    lastLocation = location;
+
+                    // Skip (0,0) — FusedLocationProvider can return "Null Island" when cache is cold
+                    if (location.getLatitude() == 0.0 && location.getLongitude() == 0.0) {
+                        Log.w(TAG, "Skipping (0,0) location");
+                        continue;
+                    }
+
+                    // Sync in-memory state if an external save occurred (photo/video/alarm)
+                    long externalTime = sessionManager.getLastTrackedTime();
+                    if (externalTime > lastSavedTime) {
+                        lastSavedLocation = new Location("");
+                        lastSavedLocation.setLatitude(sessionManager.getLastTrackedLat());
+                        lastSavedLocation.setLongitude(sessionManager.getLastTrackedLng());
+                        lastSavedTime = externalTime;
+                        Log.d(TAG, "Synced last tracked state from external save (photo/video/alarm)");
+                    }
+
+                    // ── Distance & time calculations ─────────────────────────────
+                    float distanceMoved = lastSavedLocation != null
+                            ? location.distanceTo(lastSavedLocation)
+                            : Float.MAX_VALUE;
+                    long timeSinceLastSave = System.currentTimeMillis() - lastSavedTime;
+
+                    boolean shouldSave = false;
+                    String saveReason = "";
+
+                    // Mock location → always save (datatype=8 handled by determineDatatype)
+                    DeviceInfoHelper tempDeviceInfo = new DeviceInfoHelper(LocationTrackingService.this);
+                    if (tempDeviceInfo.isMockLocation(location)) {
+                        shouldSave = true;
+                        saveReason = "MOCK_LOCATION";
+                    }
+                    // Case A: First record ever
+                    else if (lastSavedLocation == null) {
+                        shouldSave = true;
+                        saveReason = "FIRST_RECORD";
+                    }
+                    // Case B: Moved more than 50m (distance trigger)
+                    else if (distanceMoved >= DISTANCE_THRESHOLD_METERS) {
+                        shouldSave = true;
+                        saveReason = "DISTANCE_MOVED";
+                    }
+                    // Case C: Stationary heartbeat (10 min elapsed and not moving)
+                    else if (timeSinceLastSave >= HEARTBEAT_INTERVAL_MS
+                            && location.getSpeed() < MOVING_SPEED_THRESHOLD) {
+                        shouldSave = true;
+                        saveReason = "STATIONARY_HEARTBEAT";
+                    }
+                    // Case D: Safety net (15 min elapsed regardless)
+                    else if (timeSinceLastSave >= SAFETY_NET_INTERVAL_MS) {
+                        shouldSave = true;
+                        saveReason = "SAFETY_NET";
+                    }
+
+                    if (shouldSave) {
+                        Log.d(TAG, "Saving record: " + saveReason
+                                + " | distance=" + distanceMoved
+                                + "m | timeSince=" + (timeSinceLastSave / 1000) + "s");
+                        saveLocationToDatabase(location);
                     }
                 }
             }
@@ -399,8 +475,9 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "Starting continuous location updates");
 
         LocationRequest locationRequest = new LocationRequest.Builder(
-                Priority.PRIORITY_HIGH_ACCURACY, 5000)
-                .setMinUpdateIntervalMillis(5000)
+                Priority.PRIORITY_HIGH_ACCURACY, 10000)  // check every 10s, we filter ourselves
+                .setMinUpdateDistanceMeters(0)            // no OS-level distance filter
+                .setMinUpdateIntervalMillis(5000)          // min 5s between updates
                 .build();
 
         if (ActivityCompat.checkSelfPermission(this,
@@ -416,19 +493,6 @@ public class LocationTrackingService extends Service {
         );
 
         Log.d(TAG, "Location updates started");
-    }
-
-    private void startPeriodicLocationFetch() {
-        locationRunnable = new Runnable() {
-            @Override
-            public void run() {
-                Log.d(TAG, "1 minute elapsed - fetching and saving location");
-                fetchAndSaveLocation();
-                handler.postDelayed(this, UPDATE_INTERVAL);
-            }
-        };
-        handler.post(locationRunnable);
-        Log.d(TAG, "Periodic location fetch started (every 1 minute)");
     }
 
     private void startPeriodicSync() {
@@ -466,38 +530,6 @@ public class LocationTrackingService extends Service {
             NetworkInfo networkInfo = cm.getActiveNetworkInfo();
             return networkInfo != null && networkInfo.isConnected();
         }
-    }
-
-    private void fetchAndSaveLocation() {
-        if (ActivityCompat.checkSelfPermission(this,
-                android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            Log.e(TAG, "Location permission not granted");
-            return;
-        }
-
-        fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
-            // Treat (0,0) the same as null — FusedLocationProvider can return a
-            // "Null Island" location object with lat=0.0/lng=0.0 when its cache is
-            // cold (e.g. first save right after login before GPS has a real fix).
-            boolean locationValid = location != null
-                    && (location.getLatitude() != 0.0 || location.getLongitude() != 0.0);
-
-            if (locationValid) {
-                Log.d(TAG, "Fetched location for time-based save: Lat=" + location.getLatitude() +
-                        ", Lng=" + location.getLongitude());
-                saveLocationToDatabase(location);
-                lastLocation = location;
-            } else {
-                Log.w(TAG, "Location is null or (0,0) — using last known location");
-                if (lastLocation != null) {
-                    saveLocationToDatabase(lastLocation);
-                } else {
-                    Log.e(TAG, "No location available to save — skipping this cycle");
-                }
-            }
-        }).addOnFailureListener(e -> {
-            Log.e(TAG, "Failed to get location: " + e.getMessage());
-        });
     }
 
     private void saveLocationToDatabase(Location location) {
@@ -668,7 +700,9 @@ public class LocationTrackingService extends Service {
                 db.locationTrackDao().insert(track);
                 sessionManager.saveLastRecNo(nextRecNo);
                 lastSavedLocation = new Location(locationToSave);
-
+                lastSavedTime = System.currentTimeMillis();
+                sessionManager.saveLastTrackedLocation(
+                        locationToSave.getLatitude(), locationToSave.getLongitude(), lastSavedTime);
 
                 // ✅ Log datatype info
                 String datatypeStr = getDatatypeString(datatype);
@@ -1396,6 +1430,8 @@ public class LocationTrackingService extends Service {
                 );
 
                 db.locationTrackDao().insert(track);
+                // Update last tracked state so distance-based tracking picks it up
+                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
                 Log.d(TAG, "✓ Alarm dismissed record saved: datatype=" + DataTypes.ALARM_MISSED);
 
             } catch (Exception e) {
@@ -1414,10 +1450,6 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "Service onDestroy - Stopping location tracking");
 
         hasLoggedInstallReboot = false;
-
-        if (handler != null && locationRunnable != null) {
-            handler.removeCallbacks(locationRunnable);
-        }
 
         if (handler != null && syncRunnable != null) {
             handler.removeCallbacks(syncRunnable);

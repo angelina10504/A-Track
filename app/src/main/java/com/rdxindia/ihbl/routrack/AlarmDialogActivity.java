@@ -224,7 +224,6 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 || !healthInternetOk
                 || healthQCount > 30
                 || healthBatIssue
-                || healthPlayProtectOn
                 || healthBkgndRestricted
                 || healthNotificationsOff;
 
@@ -313,6 +312,8 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 );
 
                 db.locationTrackDao().insert(track);
+                // Update last tracked state so distance-based tracking resets its timers
+                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
 
                 // Persist so handleResponse, handleTimeout, and the service's
                 // saveAlarmDismissed all see that flag 100 was already saved this cycle
@@ -541,6 +542,8 @@ public class AlarmDialogActivity extends AppCompatActivity {
                 );
 
                 db.locationTrackDao().insert(track);
+                // Update last tracked state so distance-based tracking resets its timers
+                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
 
                 Log.d(TAG, "✓ Alarm record saved: datatype=" + datatype +
                         ", responseTime=" + responseTime + "s, location=" + lat + "," + lng);

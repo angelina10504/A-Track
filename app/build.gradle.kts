@@ -10,8 +10,8 @@ android {
         applicationId = "com.rdxindia.ihbl.routrack"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "3.6"
+        versionCode = 2
+        versionName = "4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -34,6 +34,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 
     applicationVariants.all {
@@ -66,10 +67,6 @@ dependencies {
     // Google Maps
     implementation("com.google.android.gms:play-services-maps:18.2.0")
 
-    //javaMail
-    implementation("com.sun.mail:android-mail:1.6.7")
-    implementation("com.sun.mail:android-activation:1.6.7")
-
     // Lifecycle & ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel:2.7.0")
     implementation("androidx.lifecycle:lifecycle-livedata:2.7.0")
@@ -92,8 +89,8 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
-    // CameraX dependencies
-    val cameraxVersion = "1.3.0"
+    // CameraX dependencies (1.4.0+ ships 16 KB page-aligned native libs)
+    val cameraxVersion = "1.5.3"
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")

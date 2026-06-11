@@ -23,17 +23,17 @@
 # Room - keep entities and DAOs (accessed via reflection)
 -keep @androidx.room.Entity class ** { *; }
 -keep @androidx.room.Dao interface ** { *; }
--keep class com.example.a_track.database.** { *; }
+-keep class com.rdxindia.ihbl.routrack.database.** { *; }
 
 # Services and Receivers registered in AndroidManifest
--keep class com.example.a_track.service.** { *; }
--keep class com.example.a_track.BootReceiver { *; }
--keep class com.example.a_track.AlarmReceiver { *; }
--keep class com.example.a_track.AlarmJobService { *; }
--keep class com.example.a_track.AlarmDialogActivity { *; }
+-keep class com.rdxindia.ihbl.routrack.service.** { *; }
+-keep class com.rdxindia.ihbl.routrack.BootReceiver { *; }
+-keep class com.rdxindia.ihbl.routrack.AlarmReceiver { *; }
+-keep class com.rdxindia.ihbl.routrack.AlarmJobService { *; }
+-keep class com.rdxindia.ihbl.routrack.AlarmDialogActivity { *; }
 
 # Utils accessed reflectively or via API callbacks
--keep class com.example.a_track.utils.** { *; }
+-keep class com.rdxindia.ihbl.routrack.utils.** { *; }
 
 # JavaMail
 -keep class com.sun.mail.** { *; }

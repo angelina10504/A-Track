@@ -195,6 +195,18 @@
                 android:textColor="@color/white"
                 android:backgroundTint="@android:color/holo_red_dark"/>
 
+            <TextView
+                android:id="@+id/tvVersion"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:padding="8dp"
+                android:gravity="center"
+                android:text="v4.1"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:alpha="0.7" />
+
         </LinearLayout>
     </ScrollView>
 

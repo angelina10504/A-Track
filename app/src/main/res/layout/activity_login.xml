@@ -68,18 +68,6 @@
         android:textColor="@android:color/white"/>
 
     <TextView
-        android:id="@+id/tvForgotPassword"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Forgot Password?"
-        android:textColor="@android:color/holo_red_dark"
-        android:textSize="14sp"
-        android:layout_marginTop="12dp"
-        android:layout_gravity="center"
-        android:clickable="true"
-        android:focusable="true"/>
-
-    <TextView
         android:id="@+id/tvCreateAccount"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

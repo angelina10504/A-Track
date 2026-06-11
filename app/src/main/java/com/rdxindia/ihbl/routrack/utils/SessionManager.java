@@ -22,6 +22,11 @@ public class SessionManager {
     private static final String KEY_INSTALL_LOGGED = "installLogged";
     private static final String KEY_LOGIN_LOGGED = "loginLogged";
 
+    // Distance-based tracking state (survives service kills)
+    private static final String KEY_LAST_TRACKED_LAT = "lastTrackedLat";
+    private static final String KEY_LAST_TRACKED_LNG = "lastTrackedLng";
+    private static final String KEY_LAST_TRACKED_TIME = "lastTrackedTime";
+
     // Verification
     private static final String KEY_VERIFICATION_STATUS = "verificationStatus";
     public static final String STATUS_VERIFIED = "VERIFIED";
@@ -246,6 +251,29 @@ public class SessionManager {
 
     public boolean isPendingVerification() {
         return STATUS_PENDING.equals(getVerificationStatus());
+    }
+
+    // ─── Distance-based tracking state ─────────────────────────────────────────
+    public void saveLastTrackedLocation(double lat, double lng, long time) {
+        prefs.edit()
+                .putLong(KEY_LAST_TRACKED_LAT, Double.doubleToRawLongBits(lat))
+                .putLong(KEY_LAST_TRACKED_LNG, Double.doubleToRawLongBits(lng))
+                .putLong(KEY_LAST_TRACKED_TIME, time)
+                .apply();
+    }
+
+    public double getLastTrackedLat() {
+        return Double.longBitsToDouble(
+                prefs.getLong(KEY_LAST_TRACKED_LAT, Double.doubleToRawLongBits(0.0)));
+    }
+
+    public double getLastTrackedLng() {
+        return Double.longBitsToDouble(
+                prefs.getLong(KEY_LAST_TRACKED_LNG, Double.doubleToRawLongBits(0.0)));
+    }
+
+    public long getLastTrackedTime() {
+        return prefs.getLong(KEY_LAST_TRACKED_TIME, 0);
     }
 
     public void logout() {

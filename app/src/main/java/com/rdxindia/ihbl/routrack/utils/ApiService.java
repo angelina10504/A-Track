@@ -624,6 +624,110 @@ public class ApiService {
     }
 
     /* ================================
+       SEND REPORT EMAIL (CSV via server)
+       ================================ */
+
+    public interface ReportEmailCallback {
+        void onSuccess();
+        void onFailure(String error);
+    }
+
+    /**
+     * Uploads the filtered-location CSV to the server, which emails it to the
+     * office. SMTP credentials live on the SERVER (stable IP), so Gmail's
+     * anti-abuse never blocks it the way client-side SMTP from field devices does.
+     * The recipient is configured server-side — the app never sends it.
+     */
+    public static void sendReportEmail(String mobileNumber,
+                                       String subject,
+                                       String body,
+                                       File csvFile,
+                                       ReportEmailCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                if (csvFile == null || !csvFile.exists()) {
+                    callback.onFailure("CSV file missing");
+                    return;
+                }
+
+                Log.d(TAG, "📤 Sending report CSV: " + csvFile.getName()
+                        + " (" + csvFile.length() + " bytes)");
+
+                String boundary = "----ROUTrackBoundary" + System.currentTimeMillis();
+                String lineEnd = "\r\n";
+                String twoHyphens = "--";
+
+                URL url = new URL(BASE_URL + "send_report.php");
+                conn = (HttpURLConnection) url.openConnection();
+                applyTrustAllSsl(conn);
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(PHOTO_TIMEOUT);
+                conn.setReadTimeout(PHOTO_TIMEOUT);
+                conn.setDoOutput(true);
+                conn.setDoInput(true);
+                conn.setRequestProperty("Content-Type",
+                        "multipart/form-data; boundary=" + boundary);
+
+                DataOutputStream out = new DataOutputStream(conn.getOutputStream());
+
+                writeFormField(out, boundary, "mobileNumber", mobileNumber);
+                writeFormField(out, boundary, "subject", subject);
+                writeFormField(out, boundary, "body", body);
+
+                // CSV attachment
+                out.writeBytes(twoHyphens + boundary + lineEnd);
+                out.writeBytes("Content-Disposition: form-data; name=\"report\"; filename=\""
+                        + csvFile.getName() + "\"" + lineEnd);
+                out.writeBytes("Content-Type: text/csv" + lineEnd);
+                out.writeBytes("Content-Transfer-Encoding: binary" + lineEnd);
+                out.writeBytes(lineEnd);
+
+                FileInputStream fis = new FileInputStream(csvFile);
+                byte[] buffer = new byte[4096];
+                int bytes;
+                while ((bytes = fis.read(buffer)) != -1) {
+                    out.write(buffer, 0, bytes);
+                }
+                fis.close();
+
+                out.writeBytes(lineEnd);
+                out.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd);
+                out.flush();
+                out.close();
+
+                int code = conn.getResponseCode();
+                BufferedReader br = new BufferedReader(new InputStreamReader(
+                        code == 200 ? conn.getInputStream() : conn.getErrorStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+
+                String responseBody = sb.toString();
+                Log.d(TAG, "📥 send_report response: " + responseBody);
+
+                if (code == 200) {
+                    JSONObject res = new JSONObject(responseBody);
+                    if (res.optBoolean("success")) {
+                        callback.onSuccess();
+                    } else {
+                        callback.onFailure(res.optString("message", "Send failed"));
+                    }
+                } else {
+                    callback.onFailure("HTTP " + code + ": " + responseBody);
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "✗ sendReportEmail exception: " + e.getMessage());
+                callback.onFailure(e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
+
+    /* ================================
        MULTIPART HELPER
        ================================ */
 
