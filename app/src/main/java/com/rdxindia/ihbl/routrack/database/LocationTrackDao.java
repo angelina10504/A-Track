@@ -60,6 +60,13 @@ public interface LocationTrackDao {
     @Query("UPDATE location_tracks SET synced = 1 WHERE id IN (:ids)")
     void markAsSynced(List<Integer> ids);
 
+    // Counts for the live foreground-notification status
+    @Query("SELECT COUNT(*) FROM location_tracks WHERE mobileNumber = :mobile AND synced = 0")
+    int countUnsynced(String mobile);
+
+    @Query("SELECT COUNT(*) FROM location_tracks WHERE mobileNumber = :mobile")
+    int countAll(String mobile);
+
     // Get records with unsynced photos
     @Query("SELECT * FROM location_tracks " +
             "WHERE mobileNumber = :mobile " +
