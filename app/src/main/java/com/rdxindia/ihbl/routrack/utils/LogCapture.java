@@ -14,6 +14,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Date;
 import java.util.Locale;
 
@@ -27,6 +28,9 @@ public class LogCapture {
 
     private static final String PACKAGE = "com.rdxindia.ihbl.routrack";
 
+    private static final int RAW_LINES = 4000;         // logcat lines to scan
+    private static final int MAX_OUTPUT_LINES = 1500;  // cap written lines (small email attachment)
+
     /** Lines mentioning the package OR any of these tags are kept. */
     private static final String[] RELEVANT_TAGS = {
             "LocationTrackingService",
@@ -39,8 +43,9 @@ public class LogCapture {
     };
 
     /**
-     * Dumps the last 5000 logcat lines (filtered to this app) plus a debug header
-     * into a timestamped file in the app's external cache dir.
+     * Dumps recent logcat output (filtered to this app, capped to the most recent
+     * {@link #MAX_OUTPUT_LINES} lines so it stays small enough for an email
+     * attachment) plus a debug header into a timestamped file in the external cache.
      *
      * @return the written file, or {@code null} on failure.
      */
@@ -63,23 +68,31 @@ public class LogCapture {
             writer = new BufferedWriter(new FileWriter(logFile));
             writer.write(buildHeader(context, sessionManager));
 
-            // -d = dump and exit, -t 5000 = last 5000 lines
+            // -d = dump and exit, -t = scan the last RAW_LINES lines
             Process process = Runtime.getRuntime().exec(
-                    new String[]{"logcat", "-d", "-t", "5000"});
+                    new String[]{"logcat", "-d", "-t", String.valueOf(RAW_LINES)});
             reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
 
+            // Keep only the most recent MAX_OUTPUT_LINES relevant lines, so the file
+            // stays small enough to ride along as an email attachment.
+            ArrayDeque<String> recent = new ArrayDeque<>();
             String line;
-            int kept = 0;
             while ((line = reader.readLine()) != null) {
                 if (isRelevant(line)) {
-                    writer.write(line);
-                    writer.write("\n");
-                    kept++;
+                    recent.addLast(line);
+                    if (recent.size() > MAX_OUTPUT_LINES) {
+                        recent.removeFirst();
+                    }
                 }
+            }
+
+            for (String l : recent) {
+                writer.write(l);
+                writer.write("\n");
             }
             writer.flush();
 
-            Log.d(TAG, "Captured " + kept + " relevant log lines -> " + logFile.getAbsolutePath());
+            Log.d(TAG, "Captured " + recent.size() + " relevant log lines -> " + logFile.getAbsolutePath());
             return logFile;
 
         } catch (IOException e) {

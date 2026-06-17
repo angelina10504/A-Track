@@ -12,6 +12,7 @@ import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import java.util.Locale;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.BatteryManager;
@@ -111,6 +112,21 @@ public class LocationTrackingService extends Service {
     private static final long SAFETY_NET_INTERVAL_MS = 15 * 60 * 1000; // 15 min force save
     private static final float MOVING_SPEED_THRESHOLD = 0.5f; // m/s — below this = stationary
 
+    // Live notification status — refreshed via NotificationManager.notify(), never
+    // by restarting the service. 60s cadence is cheap (one COUNT query + one notify).
+    private static final long NOTIFICATION_UPDATE_INTERVAL_MS = 60 * 1000;
+    private volatile long lastFixTimeMs = 0;   // stamped on every usable GPS fix
+    private volatile long lastSyncTimeMs = 0;  // stamped on server-confirmed sync
+    private Runnable notificationUpdateRunnable;
+
+    // GPS noise filtering — a stationary phone can drift 100m+ (multipath/weak signal)
+    // and fake the 50m movement trigger. Filters apply ONLY to the movement case so
+    // heartbeat/safety-net still fire indoors where accuracy is permanently poor.
+    private static final float MAX_MOVEMENT_ACCURACY_METERS = 35.0f; // worse fix can't claim a move
+    private static final long MOVE_CONFIRM_WINDOW_MS = 2 * 60 * 1000; // pending move expires after this
+    private Location pendingMoveLocation; // first >50m fix, awaiting a confirming second fix
+    private long pendingMoveTime = 0;
+
     // ✅ Track if we've already logged install/reboot for this session
 
     private boolean hasLoggedInstallReboot = false;
@@ -175,6 +191,7 @@ public class LocationTrackingService extends Service {
 
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, createNotification());
+        startNotificationUpdates();
 
         acquireGpsTimeOffset();      // accurate GPS satellite time (~10-30s), overwrites server time
 
@@ -378,19 +395,113 @@ public class LocationTrackingService extends Service {
     }
 
     private Notification createNotification() {
+        // Initial notification for startForeground() — counts not known yet
+        return buildStatusNotification(-1, -1);
+    }
+
+    /**
+     * Builds the foreground notification showing live tracking health.
+     * Pass -1 for counts that aren't known (renders as "—").
+     */
+    private Notification buildStatusNotification(int pendingCount, int totalCount) {
         Intent notificationIntent = new Intent(this, DashboardActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE
         );
 
+        boolean gpsOn = false;
+        try {
+            LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+            gpsOn = lm != null && lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        } catch (Exception ignored) {
+        }
+
+        String fixAge = lastFixTimeMs > 0 ? formatAge(lastFixTimeMs) : "waiting…";
+        String syncAge = lastSyncTimeMs > 0 ? formatAge(lastSyncTimeMs) : "not yet";
+        String pending = pendingCount >= 0 ? String.valueOf(pendingCount) : "—";
+        String total = totalCount >= 0 ? String.valueOf(totalCount) : "—";
+
+        // One-line summary (collapsed view)
+        String summary = "GPS " + (gpsOn ? "on" : "OFF")
+                + " · fix " + fixAge + " · " + pending + " pending";
+
+        // Full status (expanded view)
+        String details = "Tracking: Active"
+                + "\nGPS: " + (gpsOn ? "Available" : "UNAVAILABLE")
+                + "\nLast fix: " + fixAge
+                + "\nPending upload: " + pending
+                + "\nLast sync: " + syncAge
+                + "\nStored records: " + total;
+
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("ROU Track Active")
-                .setContentText("Securing your Safety")
+                .setContentText(summary)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(details))
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)   // updates must never re-alert/flash
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
+    }
+
+    /** "45s ago" / "12 min ago" / "1h 05m ago" */
+    private static String formatAge(long timeMs) {
+        long sec = Math.max(0, (System.currentTimeMillis() - timeMs) / 1000);
+        if (sec < 60) return sec + "s ago";
+        long min = sec / 60;
+        if (min < 60) return min + " min ago";
+        return String.format(Locale.US, "%dh %02dm ago", min / 60, min % 60);
+    }
+
+    /**
+     * Refreshes the foreground notification every 60s with live status via
+     * NotificationManager.notify() — the service itself is never restarted.
+     * DB counts run on their own short-lived thread so they can't queue behind
+     * executorService (which sync deliberately blocks for up to 30s per batch).
+     */
+    private void startNotificationUpdates() {
+        notificationUpdateRunnable = new Runnable() {
+            @Override
+            public void run() {
+                refreshNotification();
+                handler.postDelayed(this, NOTIFICATION_UPDATE_INTERVAL_MS);
+            }
+        };
+        handler.postDelayed(notificationUpdateRunnable, NOTIFICATION_UPDATE_INTERVAL_MS);
+    }
+
+    private void refreshNotification() {
+        new Thread(() -> {
+            int pending = -1;
+            int total = -1;
+            try {
+                String mobile = sessionManager.getMobileNumber();
+                if (mobile != null) {
+                    pending = db.locationTrackDao().countUnsynced(mobile);
+                    total = db.locationTrackDao().countAll(mobile);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Notification count query failed: " + e.getMessage());
+            }
+
+            final int p = pending;
+            final int t = total;
+            handler.post(() -> {
+                try {
+                    NotificationManager nm =
+                            (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                    if (nm != null) {
+                        nm.notify(NOTIFICATION_ID, buildStatusNotification(p, t));
+                    }
+                } catch (Exception e) {
+                    // POST_NOTIFICATIONS revoked etc. — never let a status update crash tracking
+                    Log.w(TAG, "Notification update failed: " + e.getMessage());
+                }
+            });
+        }).start();
     }
 
     private void setupLocationCallback() {
@@ -413,6 +524,8 @@ public class LocationTrackingService extends Service {
                         continue;
                     }
 
+                    lastFixTimeMs = System.currentTimeMillis();
+
                     // Sync in-memory state if an external save occurred (photo/video/alarm)
                     long externalTime = sessionManager.getLastTrackedTime();
                     if (externalTime > lastSavedTime) {
@@ -420,6 +533,7 @@ public class LocationTrackingService extends Service {
                         lastSavedLocation.setLatitude(sessionManager.getLastTrackedLat());
                         lastSavedLocation.setLongitude(sessionManager.getLastTrackedLng());
                         lastSavedTime = externalTime;
+                        pendingMoveLocation = null; // anchor changed — stale move candidate is meaningless
                         Log.d(TAG, "Synced last tracked state from external save (photo/video/alarm)");
                     }
 
@@ -443,10 +557,30 @@ public class LocationTrackingService extends Service {
                         shouldSave = true;
                         saveReason = "FIRST_RECORD";
                     }
-                    // Case B: Moved more than 50m (distance trigger)
+                    // Case B: Moved more than 50m (distance trigger).
+                    // GPS drift on a stationary phone can fake this, so a move only
+                    // counts when (a) the fix's accuracy is good enough to be trusted
+                    // and (b) TWO consecutive fixes agree we're >50m away — a single
+                    // drift spike snaps back on the next fix and gets discarded here.
                     else if (distanceMoved >= DISTANCE_THRESHOLD_METERS) {
-                        shouldSave = true;
-                        saveReason = "DISTANCE_MOVED";
+                        boolean accuracyOk = !location.hasAccuracy()
+                                || location.getAccuracy() <= MAX_MOVEMENT_ACCURACY_METERS;
+                        boolean pendingValid = pendingMoveLocation != null
+                                && (System.currentTimeMillis() - pendingMoveTime) <= MOVE_CONFIRM_WINDOW_MS;
+
+                        if (!accuracyOk) {
+                            pendingMoveLocation = null;
+                            Log.d(TAG, "Move rejected: accuracy " + location.getAccuracy()
+                                    + "m too poor (distance=" + distanceMoved + "m)");
+                        } else if (pendingValid) {
+                            shouldSave = true;
+                            saveReason = "DISTANCE_MOVED";
+                        } else {
+                            pendingMoveLocation = location;
+                            pendingMoveTime = System.currentTimeMillis();
+                            Log.d(TAG, "Move pending confirmation: distance=" + distanceMoved
+                                    + "m, accuracy=" + (location.hasAccuracy() ? location.getAccuracy() : -1) + "m");
+                        }
                     }
                     // Case C: Stationary heartbeat (10 min elapsed and not moving)
                     else if (timeSinceLastSave >= HEARTBEAT_INTERVAL_MS
@@ -460,7 +594,13 @@ public class LocationTrackingService extends Service {
                         saveReason = "SAFETY_NET";
                     }
 
+                    // Fix snapped back under 50m — the earlier far fix was drift, forget it
+                    if (distanceMoved < DISTANCE_THRESHOLD_METERS) {
+                        pendingMoveLocation = null;
+                    }
+
                     if (shouldSave) {
+                        pendingMoveLocation = null; // saved — next move measures from the new anchor
                         Log.d(TAG, "Saving record: " + saveReason
                                 + " | distance=" + distanceMoved
                                 + "m | timeSince=" + (timeSinceLastSave / 1000) + "s");
@@ -926,6 +1066,7 @@ public class LocationTrackingService extends Service {
                     db.locationTrackDao().markAsSynced(confirmedIds);
                     Log.d(TAG, "✓ Marked " + confirmedIds.size() + " records as synced");
                 }
+                lastSyncTimeMs = System.currentTimeMillis();
                 success[0] = true;
                 latch.countDown();
             }
@@ -1453,6 +1594,10 @@ public class LocationTrackingService extends Service {
 
         if (handler != null && syncRunnable != null) {
             handler.removeCallbacks(syncRunnable);
+        }
+
+        if (handler != null && notificationUpdateRunnable != null) {
+            handler.removeCallbacks(notificationUpdateRunnable);
         }
 
         if (healthCheckHandler != null) {
