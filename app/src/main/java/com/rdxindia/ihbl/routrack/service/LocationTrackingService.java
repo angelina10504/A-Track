@@ -1333,6 +1333,20 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "flags=" + flags + ", startId=" + startId);
         Log.d(TAG, "intent=" + (intent != null ? intent.toString() : "null"));
 
+        // CRITICAL (Android 12+): every Context.startForegroundService() call makes a
+        // promise that this service will call startForeground() within ~5s. onCreate()
+        // only runs on the FIRST start — so when AlarmReceiver re-starts us via
+        // startForegroundService() (ALARM_DISMISSED / timeout / restart) while we are
+        // ALREADY running, onCreate() does NOT run, the promise is never fulfilled, and
+        // the OS kills us with ForegroundServiceDidNotStartInTimeException
+        // (seen at AlarmReceiver.java:47). Calling startForeground() here satisfies the
+        // promise on every start; it is idempotent/harmless when already foreground.
+        try {
+            startForeground(NOTIFICATION_ID, createNotification());
+        } catch (Exception e) {
+            Log.e(TAG, "startForeground() in onStartCommand failed: " + e.getMessage());
+        }
+
         if (intent != null) {
             String action = intent.getAction();
             Log.d(TAG, "action=" + (action != null ? action : "null (normal start)"));

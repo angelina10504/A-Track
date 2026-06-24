@@ -3,6 +3,7 @@ package com.rdxindia.ihbl.routrack.utils;
 import android.util.Log;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -148,7 +149,7 @@ public class ApiService {
                 br.close();
 
                 Log.d(TAG, "checkMobileRegistered response: " + sb);
-                JSONObject res = new JSONObject(sb.toString());
+                JSONObject res = parseJsonObjectLenient(sb.toString());
                 if (res.optBoolean("success")) {
                     callback.onRegistered();
                 } else {
@@ -203,7 +204,7 @@ public class ApiService {
                 br.close();
 
                 Log.d(TAG, "verifyActivation response: " + sb);
-                JSONObject res = new JSONObject(sb.toString());
+                JSONObject res = parseJsonObjectLenient(sb.toString());
                 if (res.optBoolean("success")) {
                     callback.onVerified();
                 } else {
@@ -315,7 +316,7 @@ public class ApiService {
                 Log.d(TAG, "📥 Response: " + responseBody);
 
                 if (code == 200) {
-                    JSONObject res = new JSONObject(responseBody);
+                    JSONObject res = parseJsonObjectLenient(responseBody);
                     if (res.optBoolean("success")) {
                         // ✅ Use server-confirmed RecNos to find matching DB ids
                         JSONArray recNosArray = res.optJSONArray("syncedRecNos");
@@ -463,7 +464,7 @@ public class ApiService {
                 Log.d(TAG, "📥 Upload response: " + responseBody);
 
                 if (code == 200) {
-                    JSONObject res = new JSONObject(responseBody);
+                    JSONObject res = parseJsonObjectLenient(responseBody);
                     if (res.optBoolean("success")) {
                         String photoPath = res.optString("photoPath", "");
                         Log.d(TAG, "✓ Photo uploaded successfully: " + photoPath);
@@ -598,7 +599,7 @@ public class ApiService {
                 Log.d(TAG, "📥 Upload response: " + responseBody);
 
                 if (code == 200) {
-                    JSONObject res = new JSONObject(responseBody);
+                    JSONObject res = parseJsonObjectLenient(responseBody);
                     if (res.optBoolean("success")) {
                         String videoPath = res.optString("videoPath", "");
                         Log.d(TAG, "✓ Video uploaded successfully: " + videoPath);
@@ -708,7 +709,7 @@ public class ApiService {
                 Log.d(TAG, "📥 send_report response: " + responseBody);
 
                 if (code == 200) {
-                    JSONObject res = new JSONObject(responseBody);
+                    JSONObject res = parseJsonObjectLenient(responseBody);
                     if (res.optBoolean("success")) {
                         callback.onSuccess();
                     } else {
@@ -738,5 +739,45 @@ public class ApiService {
         out.writeBytes("Content-Type: text/plain; charset=UTF-8\r\n");
         out.writeBytes("\r\n");
         out.writeBytes(value + "\r\n");
+    }
+
+    /* ================================
+       JSON PARSE HELPER (TOLERANT)
+       ================================ */
+
+    /**
+     * Tolerant JSON-object parse. A misconfigured PHP endpoint can prepend HTML
+     * warnings or a BOM ahead of the JSON body (e.g. "&lt;br /&gt;&lt;b&gt;Warning&lt;/b&gt;...{...}").
+     * A naive {@code new JSONObject(raw)} then throws ("Value &lt;br ... cannot be
+     * converted to JSONObject"); the sync batch is treated as failed and, because
+     * those records are never server-confirmed, they get permanently stranded —
+     * the "oldest 20 records never sync" bug.
+     *
+     * This first attempts a strict parse (no behaviour change for clean JSON),
+     * and only if that fails does it recover the JSON object embedded in the
+     * response so a stray warning can't block syncing. The raw response is logged
+     * either way so the server can still be diagnosed.
+     */
+    private static JSONObject parseJsonObjectLenient(String raw) throws JSONException {
+        String trimmed = (raw == null) ? "" : raw.trim();
+        try {
+            return new JSONObject(trimmed);
+        } catch (JSONException first) {
+            int start = trimmed.indexOf('{');
+            int end = trimmed.lastIndexOf('}');
+            if (start >= 0 && end > start) {
+                Log.w(TAG, "Response had non-JSON prefix; recovering embedded JSON. Raw: "
+                        + preview(trimmed));
+                return new JSONObject(trimmed.substring(start, end + 1));
+            }
+            Log.e(TAG, "Unparseable (non-JSON) response: " + preview(trimmed));
+            throw first;
+        }
+    }
+
+    /** First 300 chars of a response, for safe logging. */
+    private static String preview(String s) {
+        if (s == null) return "null";
+        return s.length() > 300 ? s.substring(0, 300) + "…" : s;
     }
 }
