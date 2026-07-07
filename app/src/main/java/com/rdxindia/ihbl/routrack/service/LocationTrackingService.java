@@ -33,7 +33,6 @@ import android.app.ApplicationExitInfo;
 import android.app.AlarmManager;
 
 import androidx.annotation.RequiresApi;
-import com.rdxindia.ihbl.routrack.AlarmDialogActivity;
 import com.rdxindia.ihbl.routrack.AlarmReceiver;
 import com.rdxindia.ihbl.routrack.DataTypes;
 import com.rdxindia.ihbl.routrack.DashboardActivity;
@@ -89,9 +88,7 @@ public class LocationTrackingService extends Service {
     private ExecutorService executorService;
     private Location lastLocation;
     private Handler handler;
-    private Handler alarmHandler;
     private Handler healthCheckHandler;
-    private Handler permissionCheckHandler;
     private Runnable syncRunnable;
     private Runnable alarmRunnable;
     private Random random;
@@ -103,8 +100,10 @@ public class LocationTrackingService extends Service {
     private int stationaryCount = 0;
     private static final float STATIONARY_THRESHOLD = 10.0f;
     private static final float MIN_SPEED = 0.5f;
-    private static final int MIN_ALARM_INTERVAL = 15 * 60 * 1000; // 15 minutes
-    private static final int MAX_ALARM_INTERVAL = 25 * 60 * 1000; // 25 minutes
+    // Silent health logging — replaces the old pop-up safety alarm. Every 20 min we run
+    // the health checks with NO notification/sound/vibration/dialog and write a record
+    // to the server ONLY when something is wrong.
+    private static final long HEALTH_LOG_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
 
     // Distance-based tracking thresholds
     private static final float DISTANCE_THRESHOLD_METERS = 50.0f;
@@ -155,6 +154,16 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "Android API level: " + Build.VERSION.SDK_INT);
         Log.d(TAG, "Process ID: " + android.os.Process.myPid());
 
+        // CRITICAL (Android 12+): startForeground() MUST be the very first real work.
+        // startForegroundService() (used by AlarmReceiver to cold-start us) gives ~5s to
+        // reach foreground; on a slow device, doing GPS/DB/SharedPreferences/crash-log/
+        // wakelock work first blows that deadline and the OS kills us with
+        // ForegroundServiceDidNotStartInTimeException (the crash blamed on AlarmReceiver.java:47).
+        // The initial notification needs no DB/SessionManager — counts render as "—".
+        // Everything heavy is deferred to AFTER we are safely in the foreground.
+        createNotificationChannel();
+        startForeground(NOTIFICATION_ID, createNotification());
+
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         db = AppDatabase.getInstance(this);
         sessionManager = new SessionManager(this);
@@ -189,9 +198,8 @@ public class LocationTrackingService extends Service {
 
         Log.d(TAG, "WakeLock acquired - Service will run in sleep mode");
 
-        createNotificationChannel();
-        startForeground(NOTIFICATION_ID, createNotification());
-        startNotificationUpdates();
+        // Notification channel + startForeground() already done at the very top of onCreate().
+        startNotificationUpdates();  // live foreground status notification (refreshes every 60s)
 
         acquireGpsTimeOffset();      // accurate GPS satellite time (~10-30s), overwrites server time
 
@@ -207,49 +215,24 @@ public class LocationTrackingService extends Service {
             // triggered by the callback using distance/heartbeat/safety-net logic.
         });
 
-        scheduleNextAlarm();
-        scheduleWatchdog();
+        scheduleWatchdog();          // invisible WorkManager restart safety net (every 15 min)
 
-        checkAlarmPermission();
-        checkBatteryOptimization();
-
-        // ✅ NEW: Alarm health check every 10 minutes
+        // Silent health logging (replaces the old pop-up safety alarm).
+        // Every 20 min we run the SAME checks the alarm used to, but with NO notification,
+        // sound, vibration, or dialog. A record is written to the server ONLY when a
+        // tracking-critical parameter is wrong (GPS off, BG-location off, no internet,
+        // unsynced queue > 30, battery-optimised, background data blocked, notifications off).
         healthCheckHandler = new Handler(Looper.getMainLooper());
-        Runnable healthCheckRunnable = new Runnable() {
+        Runnable healthLogRunnable = new Runnable() {
             @Override
             public void run() {
-                Intent intent = new Intent(LocationTrackingService.this, AlarmReceiver.class);
-                boolean alarmUp = (PendingIntent.getBroadcast(
-                        LocationTrackingService.this, 123, intent,
-                        PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
-                ) != null);
-
-                if (!alarmUp) {
-                    Log.w(TAG, "⚠️ ALARM LOST! Rescheduling now...");
-                    scheduleNextAlarm();
-                } else {
-                    Log.d(TAG, "✓ Alarm health check: OK");
-                }
-
-                healthCheckHandler.postDelayed(this, 10 * 60 * 1000);
+                logHealthIfProblem();
+                healthCheckHandler.postDelayed(this, HEALTH_LOG_INTERVAL_MS);
             }
         };
-        healthCheckHandler.postDelayed(healthCheckRunnable, 10 * 60 * 1000);
+        healthCheckHandler.postDelayed(healthLogRunnable, HEALTH_LOG_INTERVAL_MS);
 
-        // ✅ NEW: Permission check every 30 minutes
-        permissionCheckHandler = new Handler(Looper.getMainLooper());
-        Runnable permissionCheckRunnable = new Runnable() {
-            @Override
-            public void run() {
-                checkAlarmPermission();
-                checkBatteryOptimization();
-                permissionCheckHandler.postDelayed(this, 30 * 60 * 1000);
-            }
-        };
-        permissionCheckHandler.postDelayed(permissionCheckRunnable, 30 * 60 * 1000);
-
-        Log.d(TAG, "Alarm system initialized");
-        Log.d(TAG, "─── onCreate() complete — service is running ───");
+        Log.d(TAG, "─── onCreate() complete — service running (silent health logging, no alerts) ───");
     }
 
     // ─── App crash reason logging ──────────────────────────────────────────────
@@ -1006,11 +989,11 @@ public class LocationTrackingService extends Service {
             if (!unsyncedTracks.isEmpty()) {
                 int totalRecords = unsyncedTracks.size();
 
-                if (totalRecords <= 20) {
+                final int BATCH_SIZE = 10;
+                if (totalRecords <= BATCH_SIZE) {
                     Log.d(TAG, "📍 Syncing " + totalRecords + " records (single batch)");
                     syncBatchBlocking(unsyncedTracks);
                 } else {
-                    int BATCH_SIZE = 20;
                     int totalBatches = (totalRecords + BATCH_SIZE - 1) / BATCH_SIZE;
 
                     Log.d(TAG, "📍 Starting batch sync: " + totalRecords + " records in " +
@@ -1351,15 +1334,8 @@ public class LocationTrackingService extends Service {
             String action = intent.getAction();
             Log.d(TAG, "action=" + (action != null ? action : "null (normal start)"));
 
-            if ("RESCHEDULE_ALARM".equals(action)) {
-                Log.d(TAG, "⏰ Rescheduling next alarm after user response");
-                scheduleNextAlarm();
-
-            } else if ("ALARM_DISMISSED".equals(action)) {
-                Log.d(TAG, "🔕 Alarm dismissed - saving as MISSED and rescheduling");
-                saveAlarmDismissed();
-                scheduleNextAlarm();
-            }
+            // Alarm-related actions (RESCHEDULE_ALARM / ALARM_DISMISSED) removed —
+            // the pop-up safety alarm no longer exists. Action kept only for logging.
         } else {
             Log.d(TAG, "intent is null — service restarted by OS (START_STICKY)");
         }
@@ -1384,176 +1360,25 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "✓ WorkManager watchdog scheduled (every 15 min)");
     }
 
-    private void scheduleNextAlarm() {
-        if (!sessionManager.isLoggedIn()) {
-            Log.d(TAG, "⏰ Not scheduling alarm - no user logged in");
-            return;
-        }
-
-        int randomInterval = MIN_ALARM_INTERVAL +
-                random.nextInt(MAX_ALARM_INTERVAL - MIN_ALARM_INTERVAL);
-
-        long triggerTime = System.currentTimeMillis() + randomInterval;
-        int seconds = randomInterval / 1000;
-
-        Log.d(TAG, "⏰ SCHEDULING ALARM:");
-        Log.d(TAG, "   - Interval: " + seconds + " seconds");
-        Log.d(TAG, "   - Trigger time: " + new java.util.Date(triggerTime));
-
-        // ✅ CHANGED: Use BroadcastReceiver instead of Activity
-        Intent intent = new Intent(this, AlarmReceiver.class);
-
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                this, 123, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (alarmManager.canScheduleExactAlarms()) {
-                // Permission granted — use exact Doze-safe alarm, with try-catch for OEM quirks
-                try {
-                    alarmManager.setExactAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-                    );
-                    Log.d(TAG, "✓ Exact alarm scheduled (setExactAndAllowWhileIdle)");
-                } catch (SecurityException e) {
-                    // Some OEMs revoke the permission mid-flight despite canScheduleExactAlarms() returning true
-                    Log.e(TAG, "SecurityException on exact alarm, using inexact fallback: " + e.getMessage());
-                    alarmManager.setAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-                    );
-                    Log.d(TAG, "✓ Inexact alarm scheduled (setAndAllowWhileIdle OEM fallback)");
-                }
-            } else {
-                // Permission denied — setAndAllowWhileIdle() requires NO special permission and will not crash
-                Log.w(TAG, "✗ SCHEDULE_EXACT_ALARM not granted - using setAndAllowWhileIdle() fallback");
-                alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-                );
-                Log.d(TAG, "✓ Inexact alarm scheduled (setAndAllowWhileIdle)");
-            }
-        } else {
-            // API < 31: setExactAndAllowWhileIdle() requires no special permission
-            alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-            );
-            Log.d(TAG, "✓ Exact alarm scheduled (API < S, no permission required)");
-        }
-
-        Log.d(TAG, "✓ Alarm scheduled via BroadcastReceiver");
-        logAlarmDiagnostics();
-    }
-
-    private void triggerAlarm() {
-        Log.d(TAG, "🚨 ALARM TRIGGERED - Showing alert dialog");
-
-        Intent intent = new Intent(this, AlarmDialogActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
-                Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        startActivity(intent);
-
-        // Schedule next alarm
-        scheduleNextAlarm();
-    }
-
-    private void checkAlarmPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-            if (!alarmManager.canScheduleExactAlarms()) {
-                Log.e(TAG, "⚠️ EXACT ALARM PERMISSION REVOKED!");
-
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
-                        .setContentTitle("⚠️ Critical: Alarms Disabled")
-                        .setContentText("Tap to grant alarm permission again")
-                        .setPriority(NotificationCompat.PRIORITY_MAX)
-                        .setAutoCancel(false)
-                        .setOngoing(true);
-
-                Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
-                PendingIntent pendingIntent = PendingIntent.getActivity(
-                        this, 0, intent, PendingIntent.FLAG_IMMUTABLE
-                );
-                builder.setContentIntent(pendingIntent);
-
-                NotificationManager notificationManager = getSystemService(NotificationManager.class);
-                notificationManager.notify(997, builder.build());
-            }
-        }
-    }
-
-    private void checkBatteryOptimization() {
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        String packageName = getPackageName();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                Log.w(TAG, "⚠️ Battery optimization NOT disabled!");
-
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
-                        .setContentTitle("Action Required")
-                        .setContentText("Please disable battery optimization for alarms to work")
-                        .setPriority(NotificationCompat.PRIORITY_HIGH)
-                        .setAutoCancel(true);
-
-                NotificationManager notificationManager = getSystemService(NotificationManager.class);
-                notificationManager.notify(998, builder.build());
-            }
-        }
-    }
-
-    private void logAlarmDiagnostics() {
-        AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-
-        Log.d(TAG, "=== ALARM DIAGNOSTICS ===");
-        Log.d(TAG, "Android Version: " + Build.VERSION.SDK_INT);
-        Log.d(TAG, "Device: " + Build.MANUFACTURER + " " + Build.MODEL);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Log.d(TAG, "Can schedule exact alarms: " + alarmManager.canScheduleExactAlarms());
-        }
-
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Log.d(TAG, "Battery optimization disabled: " +
-                    pm.isIgnoringBatteryOptimizations(getPackageName()));
-        }
-
-        Intent intent = new Intent(this, AlarmReceiver.class);
-        boolean alarmScheduled = (PendingIntent.getBroadcast(
-                this, 123, intent,
-                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
-        ) != null);
-        Log.d(TAG, "Alarm currently scheduled: " + alarmScheduled);
-
-        Log.d(TAG, "========================");
-    }
-
-    private void saveAlarmDismissed() {
-        android.content.SharedPreferences prefs = getSharedPreferences("AlarmGuard", MODE_PRIVATE);
-        if (prefs.getBoolean("health_alert_saved", false)) {
-            // Flag 100 was already saved for this alarm cycle — do not also save flag 71
-            Log.d(TAG, "Health alert already saved this cycle — skipping ALARM_MISSED (71)");
-            return;
-        }
-        if (prefs.getBoolean("alarm_missed_saved", false)) {
-            Log.d(TAG, "⚠️ Flag 71 already saved for this alarm cycle - skipping duplicate");
-            return;
-        }
-        prefs.edit().putBoolean("alarm_missed_saved", true).apply();
-
-        String mobileNumber = sessionManager.getMobileNumber();
-        String sessionId = sessionManager.getSessionId();
-
+    /**
+     * Silent health logging — replaces the old pop-up safety alarm. Runs the same checks
+     * the alarm used, but with NO notification/sound/vibration/dialog. Writes a
+     * HEALTH_ALERT record (which syncs to the server) ONLY when a problem is found.
+     * DB work runs on the service executor, so this is safe to call from the main thread.
+     */
+    private void logHealthIfProblem() {
+        final String mobileNumber = sessionManager.getMobileNumber();
+        final String sessionId = sessionManager.getSessionId();
         if (mobileNumber == null || sessionId == null) return;
 
         executorService.execute(() -> {
             try {
-                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
+                if (!hasHealthProblem(mobileNumber)) {
+                    Log.d(TAG, "✓ Silent health check: all OK — nothing logged");
+                    return;
+                }
 
+                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
                 double lat = lastTrack != null ? lastTrack.getLatitude() : 0.0;
                 double lng = lastTrack != null ? lastTrack.getLongitude() : 0.0;
                 float speed = lastTrack != null ? lastTrack.getSpeed() : 0.0f;
@@ -1567,7 +1392,7 @@ public class LocationTrackingService extends Service {
                 int nextRecNo = lastRecNo + 1;
                 sessionManager.saveLastRecNo(nextRecNo);
 
-                String textMsg = "ALARM_MISS:30 | " + getDeviceHealthString(mobileNumber);
+                String textMsg = "HEALTH_ALERT | " + getDeviceHealthString(mobileNumber);
 
                 LocationTrack track = new LocationTrack(
                         mobileNumber, lat, lng, speed, angle,
@@ -1581,18 +1406,60 @@ public class LocationTrackingService extends Service {
                         deviceInfo.getModelOS(), deviceInfo.getApkName(),
                         deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
                         deviceInfo.getNetworkSignalStrength(),
-                        nextRecNo, DataTypes.ALARM_MISSED
+                        nextRecNo, DataTypes.HEALTH_ALERT
                 );
 
                 db.locationTrackDao().insert(track);
-                // Update last tracked state so distance-based tracking picks it up
-                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
-                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=" + DataTypes.ALARM_MISSED);
+                Log.d(TAG, "⚠️ Silent health alert logged (datatype=" + DataTypes.HEALTH_ALERT + "): " + textMsg);
 
             } catch (Exception e) {
-                Log.e(TAG, "Error saving dismissed alarm: " + e.getMessage());
+                Log.e(TAG, "logHealthIfProblem error: " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * True if ANY tracking-critical health parameter is bad. Mirrors exactly the
+     * "Report to Office" rule the old AlarmDialogActivity used (Play Protect is NOT
+     * counted as a problem).
+     */
+    private boolean hasHealthProblem(String mobileNumber) {
+        DeviceInfoHelper di = new DeviceInfoHelper(this);
+
+        boolean gpsOff   = !"1".equals(di.getGpsState());
+        boolean bgLocOff = !DeviceInfoHelper.hasAllTheTimeLocationPermission(this);
+        boolean netOff   = !"1".equals(di.getInternetState());
+
+        boolean batOptimised = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            batOptimised = pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName());
+        }
+
+        boolean bkgndBlocked = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            bkgndBlocked = cm != null && cm.getRestrictBackgroundStatus()
+                    == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED;
+        }
+
+        boolean notifOff = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notifOff = checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED;
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            notifOff = nm != null && !nm.areNotificationsEnabled();
+        }
+
+        int q = 0;
+        try {
+            q = db.locationTrackDao().getUnsyncedCount(mobileNumber);
+        } catch (Exception ignored) {
+        }
+
+        return gpsOff || bgLocOff || netOff || q > 30
+                || batOptimised || bkgndBlocked || notifOff;
     }
 
     @Override
@@ -1616,10 +1483,6 @@ public class LocationTrackingService extends Service {
 
         if (healthCheckHandler != null) {
             healthCheckHandler.removeCallbacksAndMessages(null);
-        }
-
-        if (permissionCheckHandler != null) {
-            permissionCheckHandler.removeCallbacksAndMessages(null);
         }
 
         if (fusedLocationClient != null && locationCallback != null) {
@@ -1656,11 +1519,13 @@ public class LocationTrackingService extends Service {
 
             AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
 
-            // Use setExactAndAllowWhileIdle for more reliable restart
+            // Inexact restart — does NOT require SCHEDULE_EXACT_ALARM (which we no longer
+            // hold). A few seconds of Doze slack is fine; the WorkManager watchdog (15 min)
+            // and START_STICKY are the other restart safety nets.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(
+                alarmManager.setAndAllowWhileIdle(
                         AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                        android.os.SystemClock.elapsedRealtime() + 5000, // 5 seconds delay
+                        android.os.SystemClock.elapsedRealtime() + 5000, // ~5 seconds delay
                         restartPendingIntent
                 );
             } else {
@@ -1671,7 +1536,7 @@ public class LocationTrackingService extends Service {
                 );
             }
 
-            Log.d(TAG, "Service restart scheduled in 5 seconds");
+            Log.d(TAG, "Service restart scheduled in ~5 seconds (inexact)");
         }
     }
 }
