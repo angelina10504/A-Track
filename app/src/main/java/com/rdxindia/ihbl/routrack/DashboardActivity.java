@@ -352,34 +352,42 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
 
     // ✅ NEW: Request phone state permission
     private void requestPhoneStatePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE)
-                    != PackageManager.PERMISSION_GRANTED) {
-
-                // Show explanation dialog
-                new AlertDialog.Builder(this)
-                        .setTitle("Cellular Detection Permission")
-                        .setMessage("A-Track needs this permission to detect cellular network availability for better tracking accuracy.")
-                        .setPositiveButton("Allow", (dialog, which) -> {
-                            phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE);
-                        })
-                        .setNegativeButton("Skip", (dialog, which) -> {
-                            Log.d("DashboardActivity", "Phone state permission skipped - using fallback");
-                            startLocationService();
-                        })
-                        .show();
-            } else {
-                // Permission already granted
-                startLocationService();
-            }
-        } else {
-            // Android 5.x or lower - permission not needed
-            startLocationService();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            startLocationService();   // Android 5.x or lower — permission not needed
+            return;
         }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE)
+                == PackageManager.PERMISSION_GRANTED) {
+            startLocationService();   // already granted
+            return;
+        }
+
+        // Not granted. Ask AT MOST ONCE — cellular detection is optional, so if the user
+        // has already been prompted (granted-then-revoked, or skipped) we must NOT nag them
+        // on every Dashboard launch. Remember that we asked and move on.
+        android.content.SharedPreferences prefs =
+                getSharedPreferences("PermissionPrefs", MODE_PRIVATE);
+        if (prefs.getBoolean("cellular_prompt_shown", false)) {
+            Log.d("DashboardActivity", "Cellular permission already asked once — not re-prompting");
+            startLocationService();
+            return;
+        }
+        prefs.edit().putBoolean("cellular_prompt_shown", true).apply();
+
+        new AlertDialog.Builder(this)
+                .setTitle("Cellular Detection Permission")
+                .setMessage("A-Track needs this permission to detect cellular network availability for better tracking accuracy.")
+                .setPositiveButton("Allow", (dialog, which) ->
+                        phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE))
+                .setNegativeButton("Skip", (dialog, which) -> {
+                    Log.d("DashboardActivity", "Phone state permission skipped — won't ask again");
+                    startLocationService();
+                })
+                .show();
     }
 
     private void startLocationService() {
-        checkExactAlarmPermission();
         Intent serviceIntent = new Intent(this, LocationTrackingService.class);
         startForegroundService(serviceIntent);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
@@ -401,28 +409,6 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         Log.d("DashboardActivity", "✓ ServiceWatchdogWorker scheduled (every 15 min)");
     }
 
-    /**
-     * On Android 12 (API 31) and 13 (API 32), SCHEDULE_EXACT_ALARM is NOT auto-granted.
-     * The user must manually allow it. Without it, alarms fall back to setWindow() which
-     * can be delayed by the system. Prompt once so users are aware.
-     */
-    private void checkExactAlarmPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-            if (!alarmManager.canScheduleExactAlarms()) {
-                new AlertDialog.Builder(this)
-                        .setTitle("Enable Exact Alarms")
-                        .setMessage("A-Track needs permission to schedule exact safety check alarms. Without it, alarms may be delayed.\n\nPlease tap \"Allow\" on the next screen.")
-                        .setPositiveButton("Open Settings", (dialog, which) -> {
-                            Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
-                            intent.setData(Uri.parse("package:" + getPackageName()));
-                            startActivity(intent);
-                        })
-                        .setNegativeButton("Later", null)
-                        .show();
-            }
-        }
-    }
 
     private void startLocationUpdates() {
         updateRunnable = new Runnable() {

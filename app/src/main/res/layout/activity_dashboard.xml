@@ -202,7 +202,7 @@
                 android:layout_marginTop="16dp"
                 android:padding="8dp"
                 android:gravity="center"
-                android:text="v4.1"
+                android:text="v4.4"
                 android:textColor="@color/white"
                 android:textSize="12sp"
                 android:alpha="0.7" />

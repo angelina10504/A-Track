@@ -317,16 +317,48 @@ public class ApiService {
 
                 if (code == 200) {
                     JSONObject res = parseJsonObjectLenient(responseBody);
-                    if (res.optBoolean("success")) {
-                        // ✅ Use server-confirmed RecNos to find matching DB ids
-                        JSONArray recNosArray = res.optJSONArray("syncedRecNos");
-                        List<Integer> confirmedRecNos = new ArrayList<>();
-                        if (recNosArray != null) {
-                            for (int i = 0; i < recNosArray.length(); i++) {
-                                confirmedRecNos.add(recNosArray.getInt(i));
+
+                    // ✅ Server-confirmed RecNos — parsed up-front so the rejection report
+                    // below and the success branch can both use them.
+                    JSONArray recNosArray = res.optJSONArray("syncedRecNos");
+                    List<Integer> confirmedRecNos = new ArrayList<>();
+                    if (recNosArray != null) {
+                        for (int i = 0; i < recNosArray.length(); i++) {
+                            confirmedRecNos.add(recNosArray.getInt(i));
+                        }
+                    }
+
+                    // ✅ Surface per-row rejections. The server reports these in "errors"/
+                    // "details", but they were previously discarded — which hid WHY certain
+                    // records are never confirmed and stay stuck at synced=0 forever.
+                    int errorCount = res.optInt("errors", 0);
+                    if (errorCount > 0) {
+                        Log.e(TAG, "✗ Server rejected " + errorCount + " of "
+                                + unsynced.size() + " rows");
+
+                        JSONArray details = res.optJSONArray("details");
+                        if (details != null) {
+                            for (int i = 0; i < details.length(); i++) {
+                                Log.e(TAG, "   → " + details.getString(i));
                             }
                         }
 
+                        // Dump the full identity of every record the server did NOT confirm,
+                        // so the offending row can be found in the DB / on the server.
+                        for (LocationTrack t : unsynced) {
+                            if (!confirmedRecNos.contains(t.getRecNo())) {
+                                Log.e(TAG, "   STUCK: RecNo=" + t.getRecNo()
+                                        + " datatype=" + t.getDatatype()
+                                        + " sessionId=" + t.getSessionId()
+                                        + " lat=" + t.getLatitude()
+                                        + " lng=" + t.getLongitude()
+                                        + " dateTime=" + t.getDateTime()
+                                        + " mobile=" + t.getMobileNumber());
+                            }
+                        }
+                    }
+
+                    if (res.optBoolean("success")) {
                         // ✅ Map RecNos back to DB ids
                         List<Integer> confirmedIds = new ArrayList<>();
                         for (LocationTrack t : unsynced) {

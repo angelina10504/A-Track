@@ -33,7 +33,6 @@ import android.app.ApplicationExitInfo;
 import android.app.AlarmManager;
 
 import androidx.annotation.RequiresApi;
-import com.rdxindia.ihbl.routrack.AlarmDialogActivity;
 import com.rdxindia.ihbl.routrack.AlarmReceiver;
 import com.rdxindia.ihbl.routrack.DataTypes;
 import com.rdxindia.ihbl.routrack.DashboardActivity;
@@ -60,6 +59,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -89,9 +89,7 @@ public class LocationTrackingService extends Service {
     private ExecutorService executorService;
     private Location lastLocation;
     private Handler handler;
-    private Handler alarmHandler;
     private Handler healthCheckHandler;
-    private Handler permissionCheckHandler;
     private Runnable syncRunnable;
     private Runnable alarmRunnable;
     private Random random;
@@ -103,8 +101,10 @@ public class LocationTrackingService extends Service {
     private int stationaryCount = 0;
     private static final float STATIONARY_THRESHOLD = 10.0f;
     private static final float MIN_SPEED = 0.5f;
-    private static final int MIN_ALARM_INTERVAL = 15 * 60 * 1000; // 15 minutes
-    private static final int MAX_ALARM_INTERVAL = 25 * 60 * 1000; // 25 minutes
+    // Silent health logging — replaces the old pop-up safety alarm. Every 20 min we run
+    // the health checks with NO notification/sound/vibration/dialog and write a record
+    // to the server ONLY when something is wrong.
+    private static final long HEALTH_LOG_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
 
     // Distance-based tracking thresholds
     private static final float DISTANCE_THRESHOLD_METERS = 50.0f;
@@ -126,6 +126,18 @@ public class LocationTrackingService extends Service {
     private static final long MOVE_CONFIRM_WINDOW_MS = 2 * 60 * 1000; // pending move expires after this
     private Location pendingMoveLocation; // first >50m fix, awaiting a confirming second fix
     private long pendingMoveTime = 0;
+
+    // Teleport guard — a "move" implying a speed no field worker can achieve is a bad fix
+    // (Wi-Fi/cell positioning can report a confident-looking accuracy while being km off).
+    // Only applied to short gaps; after a long blackout a big genuine jump is expected.
+    private static final float MAX_PLAUSIBLE_SPEED_KMH = 150.0f;
+    private static final long TELEPORT_CHECK_MAX_GAP_MS = 5 * 60 * 1000;
+
+    // Timestamp of the last fix good enough to trust (accuracy within the movement gate).
+    // If this goes stale the phone has lost satellite lock and is running on coarse
+    // cell-tower positions — the office needs to know, so it feeds the health check.
+    private static final long NO_GNSS_ALERT_MS = 15 * 60 * 1000;
+    private volatile long lastGoodFixTimeMs = 0;
 
     // ✅ Track if we've already logged install/reboot for this session
 
@@ -154,6 +166,20 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "Package: " + getPackageName());
         Log.d(TAG, "Android API level: " + Build.VERSION.SDK_INT);
         Log.d(TAG, "Process ID: " + android.os.Process.myPid());
+
+        // CRITICAL (Android 12+): startForeground() MUST be the very first real work.
+        // startForegroundService() (used by AlarmReceiver to cold-start us) gives ~5s to
+        // reach foreground; on a slow device, doing GPS/DB/SharedPreferences/crash-log/
+        // wakelock work first blows that deadline and the OS kills us with
+        // ForegroundServiceDidNotStartInTimeException (the crash blamed on AlarmReceiver.java:47).
+        // The initial notification needs no DB/SessionManager — counts render as "—".
+        // Everything heavy is deferred to AFTER we are safely in the foreground.
+        createNotificationChannel();
+        startForeground(NOTIFICATION_ID, createNotification());
+
+        // Baseline for the no-GNSS check — without this the first health run would
+        // instantly report "no satellite lock" before any fix has had a chance to arrive.
+        lastGoodFixTimeMs = System.currentTimeMillis();
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         db = AppDatabase.getInstance(this);
@@ -189,9 +215,8 @@ public class LocationTrackingService extends Service {
 
         Log.d(TAG, "WakeLock acquired - Service will run in sleep mode");
 
-        createNotificationChannel();
-        startForeground(NOTIFICATION_ID, createNotification());
-        startNotificationUpdates();
+        // Notification channel + startForeground() already done at the very top of onCreate().
+        startNotificationUpdates();  // live foreground status notification (refreshes every 60s)
 
         acquireGpsTimeOffset();      // accurate GPS satellite time (~10-30s), overwrites server time
 
@@ -207,49 +232,24 @@ public class LocationTrackingService extends Service {
             // triggered by the callback using distance/heartbeat/safety-net logic.
         });
 
-        scheduleNextAlarm();
-        scheduleWatchdog();
+        scheduleWatchdog();          // invisible WorkManager restart safety net (every 15 min)
 
-        checkAlarmPermission();
-        checkBatteryOptimization();
-
-        // ✅ NEW: Alarm health check every 10 minutes
+        // Silent health logging (replaces the old pop-up safety alarm).
+        // Every 20 min we run the SAME checks the alarm used to, but with NO notification,
+        // sound, vibration, or dialog. A record is written to the server ONLY when a
+        // tracking-critical parameter is wrong (GPS off, BG-location off, no internet,
+        // unsynced queue > 30, battery-optimised, background data blocked, notifications off).
         healthCheckHandler = new Handler(Looper.getMainLooper());
-        Runnable healthCheckRunnable = new Runnable() {
+        Runnable healthLogRunnable = new Runnable() {
             @Override
             public void run() {
-                Intent intent = new Intent(LocationTrackingService.this, AlarmReceiver.class);
-                boolean alarmUp = (PendingIntent.getBroadcast(
-                        LocationTrackingService.this, 123, intent,
-                        PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
-                ) != null);
-
-                if (!alarmUp) {
-                    Log.w(TAG, "⚠️ ALARM LOST! Rescheduling now...");
-                    scheduleNextAlarm();
-                } else {
-                    Log.d(TAG, "✓ Alarm health check: OK");
-                }
-
-                healthCheckHandler.postDelayed(this, 10 * 60 * 1000);
+                logHealthIfProblem();
+                healthCheckHandler.postDelayed(this, HEALTH_LOG_INTERVAL_MS);
             }
         };
-        healthCheckHandler.postDelayed(healthCheckRunnable, 10 * 60 * 1000);
+        healthCheckHandler.postDelayed(healthLogRunnable, HEALTH_LOG_INTERVAL_MS);
 
-        // ✅ NEW: Permission check every 30 minutes
-        permissionCheckHandler = new Handler(Looper.getMainLooper());
-        Runnable permissionCheckRunnable = new Runnable() {
-            @Override
-            public void run() {
-                checkAlarmPermission();
-                checkBatteryOptimization();
-                permissionCheckHandler.postDelayed(this, 30 * 60 * 1000);
-            }
-        };
-        permissionCheckHandler.postDelayed(permissionCheckRunnable, 30 * 60 * 1000);
-
-        Log.d(TAG, "Alarm system initialized");
-        Log.d(TAG, "─── onCreate() complete — service is running ───");
+        Log.d(TAG, "─── onCreate() complete — service running (silent health logging, no alerts) ───");
     }
 
     // ─── App crash reason logging ──────────────────────────────────────────────
@@ -546,6 +546,14 @@ public class LocationTrackingService extends Service {
                     boolean shouldSave = false;
                     String saveReason = "";
 
+                    // Is this fix trustworthy enough to move the anchor? Real GNSS reports
+                    // 3-30m; coarse cell-tower fallback reports 500-1500m.
+                    boolean accuracyOk = !location.hasAccuracy()
+                            || location.getAccuracy() <= MAX_MOVEMENT_ACCURACY_METERS;
+                    if (accuracyOk) {
+                        lastGoodFixTimeMs = System.currentTimeMillis();
+                    }
+
                     // Mock location → always save (datatype=8 handled by determineDatatype)
                     DeviceInfoHelper tempDeviceInfo = new DeviceInfoHelper(LocationTrackingService.this);
                     if (tempDeviceInfo.isMockLocation(location)) {
@@ -557,53 +565,76 @@ public class LocationTrackingService extends Service {
                         shouldSave = true;
                         saveReason = "FIRST_RECORD";
                     }
-                    // Case B: Moved more than 50m (distance trigger).
-                    // GPS drift on a stationary phone can fake this, so a move only
-                    // counts when (a) the fix's accuracy is good enough to be trusted
-                    // and (b) TWO consecutive fixes agree we're >50m away — a single
-                    // drift spike snaps back on the next fix and gets discarded here.
-                    else if (distanceMoved >= DISTANCE_THRESHOLD_METERS) {
-                        boolean accuracyOk = !location.hasAccuracy()
-                                || location.getAccuracy() <= MAX_MOVEMENT_ACCURACY_METERS;
-                        boolean pendingValid = pendingMoveLocation != null
-                                && (System.currentTimeMillis() - pendingMoveTime) <= MOVE_CONFIRM_WINDOW_MS;
+                    else {
+                        // Case B: Moved more than 50m (distance trigger).
+                        // GPS drift on a stationary phone can fake this, so a move only
+                        // counts when (a) the fix's accuracy is good enough to be trusted,
+                        // (b) TWO consecutive fixes agree we're >50m away — a single
+                        // drift spike snaps back on the next fix and gets discarded — and
+                        // (c) the implied speed is physically plausible.
+                        if (distanceMoved >= DISTANCE_THRESHOLD_METERS) {
+                            boolean pendingValid = pendingMoveLocation != null
+                                    && (System.currentTimeMillis() - pendingMoveTime) <= MOVE_CONFIRM_WINDOW_MS;
 
-                        if (!accuracyOk) {
-                            pendingMoveLocation = null;
-                            Log.d(TAG, "Move rejected: accuracy " + location.getAccuracy()
-                                    + "m too poor (distance=" + distanceMoved + "m)");
-                        } else if (pendingValid) {
-                            shouldSave = true;
-                            saveReason = "DISTANCE_MOVED";
+                            // Implied speed since the last saved anchor. Only meaningful for
+                            // short gaps — after a long blackout a large jump is legitimate.
+                            boolean teleport = false;
+                            if (timeSinceLastSave > 0 && timeSinceLastSave <= TELEPORT_CHECK_MAX_GAP_MS) {
+                                float impliedKmh = (distanceMoved / 1000f)
+                                        / (timeSinceLastSave / 3600000f);
+                                teleport = impliedKmh > MAX_PLAUSIBLE_SPEED_KMH;
+                                if (teleport) {
+                                    Log.d(TAG, "Move rejected: implausible speed "
+                                            + Math.round(impliedKmh) + " km/h (distance="
+                                            + distanceMoved + "m in " + (timeSinceLastSave / 1000) + "s)");
+                                }
+                            }
+
+                            if (!accuracyOk) {
+                                pendingMoveLocation = null;
+                                Log.d(TAG, "Move rejected: accuracy " + location.getAccuracy()
+                                        + "m too poor (distance=" + distanceMoved + "m)");
+                            } else if (teleport) {
+                                pendingMoveLocation = null;
+                            } else if (pendingValid) {
+                                shouldSave = true;
+                                saveReason = "DISTANCE_MOVED";
+                            } else {
+                                pendingMoveLocation = location;
+                                pendingMoveTime = System.currentTimeMillis();
+                                Log.d(TAG, "Move pending confirmation: distance=" + distanceMoved
+                                        + "m, accuracy=" + (location.hasAccuracy() ? location.getAccuracy() : -1) + "m");
+                            }
                         } else {
-                            pendingMoveLocation = location;
-                            pendingMoveTime = System.currentTimeMillis();
-                            Log.d(TAG, "Move pending confirmation: distance=" + distanceMoved
-                                    + "m, accuracy=" + (location.hasAccuracy() ? location.getAccuracy() : -1) + "m");
+                            // Fix snapped back under 50m — the earlier far fix was drift, forget it
+                            pendingMoveLocation = null;
                         }
-                    }
-                    // Case C: Stationary heartbeat (10 min elapsed and not moving)
-                    else if (timeSinceLastSave >= HEARTBEAT_INTERVAL_MS
-                            && location.getSpeed() < MOVING_SPEED_THRESHOLD) {
-                        shouldSave = true;
-                        saveReason = "STATIONARY_HEARTBEAT";
-                    }
-                    // Case D: Safety net (15 min elapsed regardless)
-                    else if (timeSinceLastSave >= SAFETY_NET_INTERVAL_MS) {
-                        shouldSave = true;
-                        saveReason = "SAFETY_NET";
-                    }
 
-                    // Fix snapped back under 50m — the earlier far fix was drift, forget it
-                    if (distanceMoved < DISTANCE_THRESHOLD_METERS) {
-                        pendingMoveLocation = null;
+                        // Time-based fallbacks.
+                        // CRITICAL: these are evaluated even when the distance trigger above
+                        // REJECTED the fix. They used to sit in the same else-if chain, so a
+                        // phone stuck on far-away low-accuracy cell-tower fixes never reached
+                        // them and tracking went completely silent — the office saw a blank
+                        // trace instead of an approximate position. A tagged low-quality point
+                        // (see textMsg "Acc:") is far more useful than no point at all.
+                        if (!shouldSave) {
+                            if (timeSinceLastSave >= HEARTBEAT_INTERVAL_MS
+                                    && location.getSpeed() < MOVING_SPEED_THRESHOLD) {
+                                shouldSave = true;
+                                saveReason = "STATIONARY_HEARTBEAT";
+                            } else if (timeSinceLastSave >= SAFETY_NET_INTERVAL_MS) {
+                                shouldSave = true;
+                                saveReason = "SAFETY_NET";
+                            }
+                        }
                     }
 
                     if (shouldSave) {
                         pendingMoveLocation = null; // saved — next move measures from the new anchor
                         Log.d(TAG, "Saving record: " + saveReason
                                 + " | distance=" + distanceMoved
-                                + "m | timeSince=" + (timeSinceLastSave / 1000) + "s");
+                                + "m | timeSince=" + (timeSinceLastSave / 1000) + "s"
+                                + " | " + describeFixQuality(location));
                         saveLocationToDatabase(location);
                     }
                 }
@@ -808,18 +839,23 @@ public class LocationTrackingService extends Service {
                 }
                 int nextRecNo = lastRecNo + 1;
 
+                // locationToSave (NOT raw location): when stationary this is the anchored
+                // base position, so a parked phone records one stable coordinate instead
+                // of GPS jitter. Previously only lastSavedLocation used the anchor while
+                // the record itself saved the raw fix — the smoothing never reached the CSV.
                 LocationTrack track = new LocationTrack(
                         mobileNumber,
-                        location.getLatitude(),
-                        location.getLongitude(),
+                        locationToSave.getLatitude(),
+                        locationToSave.getLongitude(),
                         speedToSave,
-                        location.getBearing(),
+                        locationToSave.getBearing(),
                         currentTime,
                         sessionId,
                         battery,
                         null,  // photoPath
                         null,  // videoPath
-                        getDeviceHealthString(mobileNumber),  // textMsg
+                        // textMsg — fix quality first so bad points are obvious in the CSV
+                        describeFixQuality(location) + " | " + getDeviceHealthString(mobileNumber),
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
                         deviceInfo.getFlightState(),
@@ -848,8 +884,8 @@ public class LocationTrackingService extends Service {
                 String datatypeStr = getDatatypeString(datatype);
                 Log.d(TAG, "✓ Location saved: RecNo=" + nextRecNo +
                         ", Datatype=" + datatype + " (" + datatypeStr + ")" +
-                        ", Lat=" + location.getLatitude() +
-                        ", Lng=" + location.getLongitude() +
+                        ", Lat=" + locationToSave.getLatitude() +
+                        ", Lng=" + locationToSave.getLongitude() +
                         ", Speed=" + speedToSave + " km/h" +
                         ", Battery=" + battery + "%");
             } catch (Exception e) {
@@ -911,6 +947,24 @@ public class LocationTrackingService extends Service {
             case DataTypes.ALARM_MISSED: return "Alarm Missed";
             default:                     return "Unknown";
         }
+    }
+
+    /**
+     * Compact fix-quality tag, e.g. "Acc:12m Src:gps" or "Acc:1000m Src:network".
+     *
+     * This rides along in textMsg (already synced to the server's TextMsg column) rather
+     * than a new DB column, because the Room config uses fallbackToDestructiveMigration() —
+     * bumping the schema version would WIPE every field device's database, including
+     * unsynced records. Accuracy is the single most important diagnostic: without it a
+     * garbage cell-tower point is indistinguishable from a real GPS point on the map.
+     */
+    private String describeFixQuality(Location location) {
+        if (location == null) return "Acc:NA Src:none";
+        String acc = location.hasAccuracy()
+                ? Math.round(location.getAccuracy()) + "m"
+                : "NA";
+        String src = location.getProvider() != null ? location.getProvider() : "unknown";
+        return "Acc:" + acc + " Src:" + src;
     }
 
     /**
@@ -981,9 +1035,14 @@ public class LocationTrackingService extends Service {
             notif = (nm != null && nm.areNotificationsEnabled()) ? "On" : "Off";
         }
 
+        // Gnss — "NA" means no fix accurate enough to trust for 15+ min, i.e. the phone
+        // has lost satellite lock and is running on coarse cell-tower positions.
+        String gnss = isGnssStale() ? "NA" : "Ok";
+
         return "Loc:" + loc + ", BgLoc:" + bgLoc + ", Net:" + net + ", Q:" + q
                 + ", BatOpt:" + batOpt + ", PlayPro:" + playPro
-                + ", BkUsg:" + bkUsg + ", Notif:" + notif;
+                + ", BkUsg:" + bkUsg + ", Notif:" + notif
+                + ", Gnss:" + gnss;
     }
 
     private void syncDataToServer() {
@@ -1006,11 +1065,11 @@ public class LocationTrackingService extends Service {
             if (!unsyncedTracks.isEmpty()) {
                 int totalRecords = unsyncedTracks.size();
 
-                if (totalRecords <= 20) {
+                final int BATCH_SIZE = 10;
+                if (totalRecords <= BATCH_SIZE) {
                     Log.d(TAG, "📍 Syncing " + totalRecords + " records (single batch)");
                     syncBatchBlocking(unsyncedTracks);
                 } else {
-                    int BATCH_SIZE = 20;
                     int totalBatches = (totalRecords + BATCH_SIZE - 1) / BATCH_SIZE;
 
                     Log.d(TAG, "📍 Starting batch sync: " + totalRecords + " records in " +
@@ -1066,6 +1125,28 @@ public class LocationTrackingService extends Service {
                     db.locationTrackDao().markAsSynced(confirmedIds);
                     Log.d(TAG, "✓ Marked " + confirmedIds.size() + " records as synced");
                 }
+
+                // Poison-row self-heal. The server responded, so any batch row it did NOT
+                // confirm was actively rejected (inserted + duplicate rows are all echoed
+                // in syncedRecNos). The usual permanent cause is an over-long textMsg
+                // ("Data too long"), so trim it in the DB and let the next cycle retry.
+                // The DAO query is a no-op for rows whose textMsg is already short, and
+                // transient failures never reach here (they go to onFailure).
+                if (confirmedIds.size() < batch.size()) {
+                    List<Integer> unconfirmedIds = new ArrayList<>();
+                    for (LocationTrack t : batch) {
+                        if (!confirmedIds.contains(t.getId())) {
+                            unconfirmedIds.add(t.getId());
+                        }
+                    }
+                    int healed = db.locationTrackDao()
+                            .capTextMsg(unconfirmedIds, LocationTrack.TEXT_MSG_MAX_LEN);
+                    if (healed > 0) {
+                        Log.w(TAG, "🩹 Self-heal: trimmed over-long textMsg on " + healed
+                                + " stuck record(s); will retry next sync");
+                    }
+                }
+
                 lastSyncTimeMs = System.currentTimeMillis();
                 success[0] = true;
                 latch.countDown();
@@ -1351,15 +1432,8 @@ public class LocationTrackingService extends Service {
             String action = intent.getAction();
             Log.d(TAG, "action=" + (action != null ? action : "null (normal start)"));
 
-            if ("RESCHEDULE_ALARM".equals(action)) {
-                Log.d(TAG, "⏰ Rescheduling next alarm after user response");
-                scheduleNextAlarm();
-
-            } else if ("ALARM_DISMISSED".equals(action)) {
-                Log.d(TAG, "🔕 Alarm dismissed - saving as MISSED and rescheduling");
-                saveAlarmDismissed();
-                scheduleNextAlarm();
-            }
+            // Alarm-related actions (RESCHEDULE_ALARM / ALARM_DISMISSED) removed —
+            // the pop-up safety alarm no longer exists. Action kept only for logging.
         } else {
             Log.d(TAG, "intent is null — service restarted by OS (START_STICKY)");
         }
@@ -1384,176 +1458,25 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "✓ WorkManager watchdog scheduled (every 15 min)");
     }
 
-    private void scheduleNextAlarm() {
-        if (!sessionManager.isLoggedIn()) {
-            Log.d(TAG, "⏰ Not scheduling alarm - no user logged in");
-            return;
-        }
-
-        int randomInterval = MIN_ALARM_INTERVAL +
-                random.nextInt(MAX_ALARM_INTERVAL - MIN_ALARM_INTERVAL);
-
-        long triggerTime = System.currentTimeMillis() + randomInterval;
-        int seconds = randomInterval / 1000;
-
-        Log.d(TAG, "⏰ SCHEDULING ALARM:");
-        Log.d(TAG, "   - Interval: " + seconds + " seconds");
-        Log.d(TAG, "   - Trigger time: " + new java.util.Date(triggerTime));
-
-        // ✅ CHANGED: Use BroadcastReceiver instead of Activity
-        Intent intent = new Intent(this, AlarmReceiver.class);
-
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                this, 123, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (alarmManager.canScheduleExactAlarms()) {
-                // Permission granted — use exact Doze-safe alarm, with try-catch for OEM quirks
-                try {
-                    alarmManager.setExactAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-                    );
-                    Log.d(TAG, "✓ Exact alarm scheduled (setExactAndAllowWhileIdle)");
-                } catch (SecurityException e) {
-                    // Some OEMs revoke the permission mid-flight despite canScheduleExactAlarms() returning true
-                    Log.e(TAG, "SecurityException on exact alarm, using inexact fallback: " + e.getMessage());
-                    alarmManager.setAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-                    );
-                    Log.d(TAG, "✓ Inexact alarm scheduled (setAndAllowWhileIdle OEM fallback)");
-                }
-            } else {
-                // Permission denied — setAndAllowWhileIdle() requires NO special permission and will not crash
-                Log.w(TAG, "✗ SCHEDULE_EXACT_ALARM not granted - using setAndAllowWhileIdle() fallback");
-                alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-                );
-                Log.d(TAG, "✓ Inexact alarm scheduled (setAndAllowWhileIdle)");
-            }
-        } else {
-            // API < 31: setExactAndAllowWhileIdle() requires no special permission
-            alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent
-            );
-            Log.d(TAG, "✓ Exact alarm scheduled (API < S, no permission required)");
-        }
-
-        Log.d(TAG, "✓ Alarm scheduled via BroadcastReceiver");
-        logAlarmDiagnostics();
-    }
-
-    private void triggerAlarm() {
-        Log.d(TAG, "🚨 ALARM TRIGGERED - Showing alert dialog");
-
-        Intent intent = new Intent(this, AlarmDialogActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
-                Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        startActivity(intent);
-
-        // Schedule next alarm
-        scheduleNextAlarm();
-    }
-
-    private void checkAlarmPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-            if (!alarmManager.canScheduleExactAlarms()) {
-                Log.e(TAG, "⚠️ EXACT ALARM PERMISSION REVOKED!");
-
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
-                        .setContentTitle("⚠️ Critical: Alarms Disabled")
-                        .setContentText("Tap to grant alarm permission again")
-                        .setPriority(NotificationCompat.PRIORITY_MAX)
-                        .setAutoCancel(false)
-                        .setOngoing(true);
-
-                Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
-                PendingIntent pendingIntent = PendingIntent.getActivity(
-                        this, 0, intent, PendingIntent.FLAG_IMMUTABLE
-                );
-                builder.setContentIntent(pendingIntent);
-
-                NotificationManager notificationManager = getSystemService(NotificationManager.class);
-                notificationManager.notify(997, builder.build());
-            }
-        }
-    }
-
-    private void checkBatteryOptimization() {
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        String packageName = getPackageName();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                Log.w(TAG, "⚠️ Battery optimization NOT disabled!");
-
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
-                        .setContentTitle("Action Required")
-                        .setContentText("Please disable battery optimization for alarms to work")
-                        .setPriority(NotificationCompat.PRIORITY_HIGH)
-                        .setAutoCancel(true);
-
-                NotificationManager notificationManager = getSystemService(NotificationManager.class);
-                notificationManager.notify(998, builder.build());
-            }
-        }
-    }
-
-    private void logAlarmDiagnostics() {
-        AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
-
-        Log.d(TAG, "=== ALARM DIAGNOSTICS ===");
-        Log.d(TAG, "Android Version: " + Build.VERSION.SDK_INT);
-        Log.d(TAG, "Device: " + Build.MANUFACTURER + " " + Build.MODEL);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Log.d(TAG, "Can schedule exact alarms: " + alarmManager.canScheduleExactAlarms());
-        }
-
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Log.d(TAG, "Battery optimization disabled: " +
-                    pm.isIgnoringBatteryOptimizations(getPackageName()));
-        }
-
-        Intent intent = new Intent(this, AlarmReceiver.class);
-        boolean alarmScheduled = (PendingIntent.getBroadcast(
-                this, 123, intent,
-                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
-        ) != null);
-        Log.d(TAG, "Alarm currently scheduled: " + alarmScheduled);
-
-        Log.d(TAG, "========================");
-    }
-
-    private void saveAlarmDismissed() {
-        android.content.SharedPreferences prefs = getSharedPreferences("AlarmGuard", MODE_PRIVATE);
-        if (prefs.getBoolean("health_alert_saved", false)) {
-            // Flag 100 was already saved for this alarm cycle — do not also save flag 71
-            Log.d(TAG, "Health alert already saved this cycle — skipping ALARM_MISSED (71)");
-            return;
-        }
-        if (prefs.getBoolean("alarm_missed_saved", false)) {
-            Log.d(TAG, "⚠️ Flag 71 already saved for this alarm cycle - skipping duplicate");
-            return;
-        }
-        prefs.edit().putBoolean("alarm_missed_saved", true).apply();
-
-        String mobileNumber = sessionManager.getMobileNumber();
-        String sessionId = sessionManager.getSessionId();
-
+    /**
+     * Silent health logging — replaces the old pop-up safety alarm. Runs the same checks
+     * the alarm used, but with NO notification/sound/vibration/dialog. Writes a
+     * HEALTH_ALERT record (which syncs to the server) ONLY when a problem is found.
+     * DB work runs on the service executor, so this is safe to call from the main thread.
+     */
+    private void logHealthIfProblem() {
+        final String mobileNumber = sessionManager.getMobileNumber();
+        final String sessionId = sessionManager.getSessionId();
         if (mobileNumber == null || sessionId == null) return;
 
         executorService.execute(() -> {
             try {
-                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
+                if (!hasHealthProblem(mobileNumber)) {
+                    Log.d(TAG, "✓ Silent health check: all OK — nothing logged");
+                    return;
+                }
 
+                LocationTrack lastTrack = db.locationTrackDao().getLastLocationSync(mobileNumber);
                 double lat = lastTrack != null ? lastTrack.getLatitude() : 0.0;
                 double lng = lastTrack != null ? lastTrack.getLongitude() : 0.0;
                 float speed = lastTrack != null ? lastTrack.getSpeed() : 0.0f;
@@ -1567,7 +1490,7 @@ public class LocationTrackingService extends Service {
                 int nextRecNo = lastRecNo + 1;
                 sessionManager.saveLastRecNo(nextRecNo);
 
-                String textMsg = "ALARM_MISS:30 | " + getDeviceHealthString(mobileNumber);
+                String textMsg = "HEALTH_ALERT | " + getDeviceHealthString(mobileNumber);
 
                 LocationTrack track = new LocationTrack(
                         mobileNumber, lat, lng, speed, angle,
@@ -1581,18 +1504,71 @@ public class LocationTrackingService extends Service {
                         deviceInfo.getModelOS(), deviceInfo.getApkName(),
                         deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
                         deviceInfo.getNetworkSignalStrength(),
-                        nextRecNo, DataTypes.ALARM_MISSED
+                        nextRecNo, DataTypes.HEALTH_ALERT
                 );
 
                 db.locationTrackDao().insert(track);
-                // Update last tracked state so distance-based tracking picks it up
-                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
-                Log.d(TAG, "✓ Alarm dismissed record saved: datatype=" + DataTypes.ALARM_MISSED);
+                Log.d(TAG, "⚠️ Silent health alert logged (datatype=" + DataTypes.HEALTH_ALERT + "): " + textMsg);
 
             } catch (Exception e) {
-                Log.e(TAG, "Error saving dismissed alarm: " + e.getMessage());
+                Log.e(TAG, "logHealthIfProblem error: " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * True when no fix good enough to trust has arrived for {@link #NO_GNSS_ALERT_MS}.
+     * Means the phone has lost satellite lock and the fused provider is falling back to
+     * coarse cell-tower positions (accuracy 500-1500m) — the cause of erratic traces.
+     */
+    private boolean isGnssStale() {
+        return lastGoodFixTimeMs > 0
+                && (System.currentTimeMillis() - lastGoodFixTimeMs) >= NO_GNSS_ALERT_MS;
+    }
+
+    /**
+     * True if ANY tracking-critical health parameter is bad. Mirrors exactly the
+     * "Report to Office" rule the old AlarmDialogActivity used (Play Protect is NOT
+     * counted as a problem).
+     */
+    private boolean hasHealthProblem(String mobileNumber) {
+        DeviceInfoHelper di = new DeviceInfoHelper(this);
+
+        boolean gpsOff   = !"1".equals(di.getGpsState());
+        boolean bgLocOff = !DeviceInfoHelper.hasAllTheTimeLocationPermission(this);
+        boolean netOff   = !"1".equals(di.getInternetState());
+
+        boolean batOptimised = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            batOptimised = pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName());
+        }
+
+        boolean bkgndBlocked = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            bkgndBlocked = cm != null && cm.getRestrictBackgroundStatus()
+                    == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED;
+        }
+
+        boolean notifOff = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notifOff = checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED;
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            notifOff = nm != null && !nm.areNotificationsEnabled();
+        }
+
+        int q = 0;
+        try {
+            q = db.locationTrackDao().getUnsyncedCount(mobileNumber);
+        } catch (Exception ignored) {
+        }
+
+        return gpsOff || bgLocOff || netOff || q > 30
+                || batOptimised || bkgndBlocked || notifOff
+                || isGnssStale();
     }
 
     @Override
@@ -1616,10 +1592,6 @@ public class LocationTrackingService extends Service {
 
         if (healthCheckHandler != null) {
             healthCheckHandler.removeCallbacksAndMessages(null);
-        }
-
-        if (permissionCheckHandler != null) {
-            permissionCheckHandler.removeCallbacksAndMessages(null);
         }
 
         if (fusedLocationClient != null && locationCallback != null) {
@@ -1656,11 +1628,13 @@ public class LocationTrackingService extends Service {
 
             AlarmManager alarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
 
-            // Use setExactAndAllowWhileIdle for more reliable restart
+            // Inexact restart — does NOT require SCHEDULE_EXACT_ALARM (which we no longer
+            // hold). A few seconds of Doze slack is fine; the WorkManager watchdog (15 min)
+            // and START_STICKY are the other restart safety nets.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(
+                alarmManager.setAndAllowWhileIdle(
                         AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                        android.os.SystemClock.elapsedRealtime() + 5000, // 5 seconds delay
+                        android.os.SystemClock.elapsedRealtime() + 5000, // ~5 seconds delay
                         restartPendingIntent
                 );
             } else {
@@ -1671,7 +1645,7 @@ public class LocationTrackingService extends Service {
                 );
             }
 
-            Log.d(TAG, "Service restart scheduled in 5 seconds");
+            Log.d(TAG, "Service restart scheduled in ~5 seconds (inexact)");
         }
     }
 }

@@ -17,9 +17,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- VIBRATE, SCHEDULE_EXACT_ALARM and USE_FULL_SCREEN_INTENT removed with the
+         pop-up safety alarm. The 5s service-restart now uses an inexact alarm
+         (setAndAllowWhileIdle), which needs no special permission. -->
 
     <application
         android:allowBackup="true"
@@ -78,16 +78,6 @@
         <activity
             android:name=".CameraActivity"
             android:exported="false" />
-
-        <!-- Alarm Dialog Activity -->
-        <activity
-            android:name=".AlarmDialogActivity"
-            android:exported="false"
-            android:theme="@style/Theme.AppCompat.Dialog"
-            android:launchMode="singleInstance"
-            android:excludeFromRecents="true"
-            android:screenOrientation="portrait" />
-
 
         <!-- Location Tracking Service -->
         <service
