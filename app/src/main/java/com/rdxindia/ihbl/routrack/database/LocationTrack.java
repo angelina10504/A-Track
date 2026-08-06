@@ -50,6 +50,23 @@ public class LocationTrack {
     @ColumnInfo(name = "textMsg")
     private String textMsg;
 
+    /**
+     * Hard cap on textMsg length. The server's TextMsg column rejects over-long values
+     * ("Data too long") and a rejected row is retried forever, never confirmed — the
+     * poison-row cause of records permanently stuck at synced=0. Crash records
+     * (datatype 99) carry stack traces and are the usual offenders. Capping here — in
+     * the constructor AND the setter — covers every construction site in one place,
+     * and also trims over-long legacy rows as they are read back for sync.
+     */
+    public static final int TEXT_MSG_MAX_LEN = 250;
+
+    private static String capTextMsg(String value) {
+        if (value != null && value.length() > TEXT_MSG_MAX_LEN) {
+            return value.substring(0, TEXT_MSG_MAX_LEN);
+        }
+        return value;
+    }
+
     @ColumnInfo(name = "photoSynced")
     private int photoSynced = 0;
 
@@ -113,7 +130,7 @@ public class LocationTrack {
         this.synced = 0;        // always unsynced when created
         this.photoPath = photoPath;
         this.videoPath = videoPath;
-        this.textMsg = textMsg;
+        this.textMsg = capTextMsg(textMsg);
         this.gpsState = gpsState;
         this.internetState = internetState;
         this.flightState = flightState;
@@ -181,7 +198,7 @@ public class LocationTrack {
 
     public String getTextMsg() {return textMsg;}
 
-    public void setTextMsg(String textMsg) {this.textMsg = textMsg;}
+    public void setTextMsg(String textMsg) {this.textMsg = capTextMsg(textMsg);}
 
     public String getGpsState() { return gpsState; }
     public void setGpsState(String gpsState) { this.gpsState = gpsState; }

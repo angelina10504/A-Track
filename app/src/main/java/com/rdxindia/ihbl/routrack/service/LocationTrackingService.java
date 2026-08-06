@@ -59,6 +59,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -126,6 +127,18 @@ public class LocationTrackingService extends Service {
     private Location pendingMoveLocation; // first >50m fix, awaiting a confirming second fix
     private long pendingMoveTime = 0;
 
+    // Teleport guard — a "move" implying a speed no field worker can achieve is a bad fix
+    // (Wi-Fi/cell positioning can report a confident-looking accuracy while being km off).
+    // Only applied to short gaps; after a long blackout a big genuine jump is expected.
+    private static final float MAX_PLAUSIBLE_SPEED_KMH = 150.0f;
+    private static final long TELEPORT_CHECK_MAX_GAP_MS = 5 * 60 * 1000;
+
+    // Timestamp of the last fix good enough to trust (accuracy within the movement gate).
+    // If this goes stale the phone has lost satellite lock and is running on coarse
+    // cell-tower positions — the office needs to know, so it feeds the health check.
+    private static final long NO_GNSS_ALERT_MS = 15 * 60 * 1000;
+    private volatile long lastGoodFixTimeMs = 0;
+
     // ✅ Track if we've already logged install/reboot for this session
 
     private boolean hasLoggedInstallReboot = false;
@@ -163,6 +176,10 @@ public class LocationTrackingService extends Service {
         // Everything heavy is deferred to AFTER we are safely in the foreground.
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, createNotification());
+
+        // Baseline for the no-GNSS check — without this the first health run would
+        // instantly report "no satellite lock" before any fix has had a chance to arrive.
+        lastGoodFixTimeMs = System.currentTimeMillis();
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         db = AppDatabase.getInstance(this);
@@ -529,6 +546,14 @@ public class LocationTrackingService extends Service {
                     boolean shouldSave = false;
                     String saveReason = "";
 
+                    // Is this fix trustworthy enough to move the anchor? Real GNSS reports
+                    // 3-30m; coarse cell-tower fallback reports 500-1500m.
+                    boolean accuracyOk = !location.hasAccuracy()
+                            || location.getAccuracy() <= MAX_MOVEMENT_ACCURACY_METERS;
+                    if (accuracyOk) {
+                        lastGoodFixTimeMs = System.currentTimeMillis();
+                    }
+
                     // Mock location → always save (datatype=8 handled by determineDatatype)
                     DeviceInfoHelper tempDeviceInfo = new DeviceInfoHelper(LocationTrackingService.this);
                     if (tempDeviceInfo.isMockLocation(location)) {
@@ -540,53 +565,76 @@ public class LocationTrackingService extends Service {
                         shouldSave = true;
                         saveReason = "FIRST_RECORD";
                     }
-                    // Case B: Moved more than 50m (distance trigger).
-                    // GPS drift on a stationary phone can fake this, so a move only
-                    // counts when (a) the fix's accuracy is good enough to be trusted
-                    // and (b) TWO consecutive fixes agree we're >50m away — a single
-                    // drift spike snaps back on the next fix and gets discarded here.
-                    else if (distanceMoved >= DISTANCE_THRESHOLD_METERS) {
-                        boolean accuracyOk = !location.hasAccuracy()
-                                || location.getAccuracy() <= MAX_MOVEMENT_ACCURACY_METERS;
-                        boolean pendingValid = pendingMoveLocation != null
-                                && (System.currentTimeMillis() - pendingMoveTime) <= MOVE_CONFIRM_WINDOW_MS;
+                    else {
+                        // Case B: Moved more than 50m (distance trigger).
+                        // GPS drift on a stationary phone can fake this, so a move only
+                        // counts when (a) the fix's accuracy is good enough to be trusted,
+                        // (b) TWO consecutive fixes agree we're >50m away — a single
+                        // drift spike snaps back on the next fix and gets discarded — and
+                        // (c) the implied speed is physically plausible.
+                        if (distanceMoved >= DISTANCE_THRESHOLD_METERS) {
+                            boolean pendingValid = pendingMoveLocation != null
+                                    && (System.currentTimeMillis() - pendingMoveTime) <= MOVE_CONFIRM_WINDOW_MS;
 
-                        if (!accuracyOk) {
-                            pendingMoveLocation = null;
-                            Log.d(TAG, "Move rejected: accuracy " + location.getAccuracy()
-                                    + "m too poor (distance=" + distanceMoved + "m)");
-                        } else if (pendingValid) {
-                            shouldSave = true;
-                            saveReason = "DISTANCE_MOVED";
+                            // Implied speed since the last saved anchor. Only meaningful for
+                            // short gaps — after a long blackout a large jump is legitimate.
+                            boolean teleport = false;
+                            if (timeSinceLastSave > 0 && timeSinceLastSave <= TELEPORT_CHECK_MAX_GAP_MS) {
+                                float impliedKmh = (distanceMoved / 1000f)
+                                        / (timeSinceLastSave / 3600000f);
+                                teleport = impliedKmh > MAX_PLAUSIBLE_SPEED_KMH;
+                                if (teleport) {
+                                    Log.d(TAG, "Move rejected: implausible speed "
+                                            + Math.round(impliedKmh) + " km/h (distance="
+                                            + distanceMoved + "m in " + (timeSinceLastSave / 1000) + "s)");
+                                }
+                            }
+
+                            if (!accuracyOk) {
+                                pendingMoveLocation = null;
+                                Log.d(TAG, "Move rejected: accuracy " + location.getAccuracy()
+                                        + "m too poor (distance=" + distanceMoved + "m)");
+                            } else if (teleport) {
+                                pendingMoveLocation = null;
+                            } else if (pendingValid) {
+                                shouldSave = true;
+                                saveReason = "DISTANCE_MOVED";
+                            } else {
+                                pendingMoveLocation = location;
+                                pendingMoveTime = System.currentTimeMillis();
+                                Log.d(TAG, "Move pending confirmation: distance=" + distanceMoved
+                                        + "m, accuracy=" + (location.hasAccuracy() ? location.getAccuracy() : -1) + "m");
+                            }
                         } else {
-                            pendingMoveLocation = location;
-                            pendingMoveTime = System.currentTimeMillis();
-                            Log.d(TAG, "Move pending confirmation: distance=" + distanceMoved
-                                    + "m, accuracy=" + (location.hasAccuracy() ? location.getAccuracy() : -1) + "m");
+                            // Fix snapped back under 50m — the earlier far fix was drift, forget it
+                            pendingMoveLocation = null;
                         }
-                    }
-                    // Case C: Stationary heartbeat (10 min elapsed and not moving)
-                    else if (timeSinceLastSave >= HEARTBEAT_INTERVAL_MS
-                            && location.getSpeed() < MOVING_SPEED_THRESHOLD) {
-                        shouldSave = true;
-                        saveReason = "STATIONARY_HEARTBEAT";
-                    }
-                    // Case D: Safety net (15 min elapsed regardless)
-                    else if (timeSinceLastSave >= SAFETY_NET_INTERVAL_MS) {
-                        shouldSave = true;
-                        saveReason = "SAFETY_NET";
-                    }
 
-                    // Fix snapped back under 50m — the earlier far fix was drift, forget it
-                    if (distanceMoved < DISTANCE_THRESHOLD_METERS) {
-                        pendingMoveLocation = null;
+                        // Time-based fallbacks.
+                        // CRITICAL: these are evaluated even when the distance trigger above
+                        // REJECTED the fix. They used to sit in the same else-if chain, so a
+                        // phone stuck on far-away low-accuracy cell-tower fixes never reached
+                        // them and tracking went completely silent — the office saw a blank
+                        // trace instead of an approximate position. A tagged low-quality point
+                        // (see textMsg "Acc:") is far more useful than no point at all.
+                        if (!shouldSave) {
+                            if (timeSinceLastSave >= HEARTBEAT_INTERVAL_MS
+                                    && location.getSpeed() < MOVING_SPEED_THRESHOLD) {
+                                shouldSave = true;
+                                saveReason = "STATIONARY_HEARTBEAT";
+                            } else if (timeSinceLastSave >= SAFETY_NET_INTERVAL_MS) {
+                                shouldSave = true;
+                                saveReason = "SAFETY_NET";
+                            }
+                        }
                     }
 
                     if (shouldSave) {
                         pendingMoveLocation = null; // saved — next move measures from the new anchor
                         Log.d(TAG, "Saving record: " + saveReason
                                 + " | distance=" + distanceMoved
-                                + "m | timeSince=" + (timeSinceLastSave / 1000) + "s");
+                                + "m | timeSince=" + (timeSinceLastSave / 1000) + "s"
+                                + " | " + describeFixQuality(location));
                         saveLocationToDatabase(location);
                     }
                 }
@@ -791,18 +839,23 @@ public class LocationTrackingService extends Service {
                 }
                 int nextRecNo = lastRecNo + 1;
 
+                // locationToSave (NOT raw location): when stationary this is the anchored
+                // base position, so a parked phone records one stable coordinate instead
+                // of GPS jitter. Previously only lastSavedLocation used the anchor while
+                // the record itself saved the raw fix — the smoothing never reached the CSV.
                 LocationTrack track = new LocationTrack(
                         mobileNumber,
-                        location.getLatitude(),
-                        location.getLongitude(),
+                        locationToSave.getLatitude(),
+                        locationToSave.getLongitude(),
                         speedToSave,
-                        location.getBearing(),
+                        locationToSave.getBearing(),
                         currentTime,
                         sessionId,
                         battery,
                         null,  // photoPath
                         null,  // videoPath
-                        getDeviceHealthString(mobileNumber),  // textMsg
+                        // textMsg — fix quality first so bad points are obvious in the CSV
+                        describeFixQuality(location) + " | " + getDeviceHealthString(mobileNumber),
                         deviceInfo.getGpsState(),
                         deviceInfo.getInternetState(),
                         deviceInfo.getFlightState(),
@@ -831,8 +884,8 @@ public class LocationTrackingService extends Service {
                 String datatypeStr = getDatatypeString(datatype);
                 Log.d(TAG, "✓ Location saved: RecNo=" + nextRecNo +
                         ", Datatype=" + datatype + " (" + datatypeStr + ")" +
-                        ", Lat=" + location.getLatitude() +
-                        ", Lng=" + location.getLongitude() +
+                        ", Lat=" + locationToSave.getLatitude() +
+                        ", Lng=" + locationToSave.getLongitude() +
                         ", Speed=" + speedToSave + " km/h" +
                         ", Battery=" + battery + "%");
             } catch (Exception e) {
@@ -894,6 +947,24 @@ public class LocationTrackingService extends Service {
             case DataTypes.ALARM_MISSED: return "Alarm Missed";
             default:                     return "Unknown";
         }
+    }
+
+    /**
+     * Compact fix-quality tag, e.g. "Acc:12m Src:gps" or "Acc:1000m Src:network".
+     *
+     * This rides along in textMsg (already synced to the server's TextMsg column) rather
+     * than a new DB column, because the Room config uses fallbackToDestructiveMigration() —
+     * bumping the schema version would WIPE every field device's database, including
+     * unsynced records. Accuracy is the single most important diagnostic: without it a
+     * garbage cell-tower point is indistinguishable from a real GPS point on the map.
+     */
+    private String describeFixQuality(Location location) {
+        if (location == null) return "Acc:NA Src:none";
+        String acc = location.hasAccuracy()
+                ? Math.round(location.getAccuracy()) + "m"
+                : "NA";
+        String src = location.getProvider() != null ? location.getProvider() : "unknown";
+        return "Acc:" + acc + " Src:" + src;
     }
 
     /**
@@ -964,9 +1035,14 @@ public class LocationTrackingService extends Service {
             notif = (nm != null && nm.areNotificationsEnabled()) ? "On" : "Off";
         }
 
+        // Gnss — "NA" means no fix accurate enough to trust for 15+ min, i.e. the phone
+        // has lost satellite lock and is running on coarse cell-tower positions.
+        String gnss = isGnssStale() ? "NA" : "Ok";
+
         return "Loc:" + loc + ", BgLoc:" + bgLoc + ", Net:" + net + ", Q:" + q
                 + ", BatOpt:" + batOpt + ", PlayPro:" + playPro
-                + ", BkUsg:" + bkUsg + ", Notif:" + notif;
+                + ", BkUsg:" + bkUsg + ", Notif:" + notif
+                + ", Gnss:" + gnss;
     }
 
     private void syncDataToServer() {
@@ -1049,6 +1125,28 @@ public class LocationTrackingService extends Service {
                     db.locationTrackDao().markAsSynced(confirmedIds);
                     Log.d(TAG, "✓ Marked " + confirmedIds.size() + " records as synced");
                 }
+
+                // Poison-row self-heal. The server responded, so any batch row it did NOT
+                // confirm was actively rejected (inserted + duplicate rows are all echoed
+                // in syncedRecNos). The usual permanent cause is an over-long textMsg
+                // ("Data too long"), so trim it in the DB and let the next cycle retry.
+                // The DAO query is a no-op for rows whose textMsg is already short, and
+                // transient failures never reach here (they go to onFailure).
+                if (confirmedIds.size() < batch.size()) {
+                    List<Integer> unconfirmedIds = new ArrayList<>();
+                    for (LocationTrack t : batch) {
+                        if (!confirmedIds.contains(t.getId())) {
+                            unconfirmedIds.add(t.getId());
+                        }
+                    }
+                    int healed = db.locationTrackDao()
+                            .capTextMsg(unconfirmedIds, LocationTrack.TEXT_MSG_MAX_LEN);
+                    if (healed > 0) {
+                        Log.w(TAG, "🩹 Self-heal: trimmed over-long textMsg on " + healed
+                                + " stuck record(s); will retry next sync");
+                    }
+                }
+
                 lastSyncTimeMs = System.currentTimeMillis();
                 success[0] = true;
                 latch.countDown();
@@ -1419,6 +1517,16 @@ public class LocationTrackingService extends Service {
     }
 
     /**
+     * True when no fix good enough to trust has arrived for {@link #NO_GNSS_ALERT_MS}.
+     * Means the phone has lost satellite lock and the fused provider is falling back to
+     * coarse cell-tower positions (accuracy 500-1500m) — the cause of erratic traces.
+     */
+    private boolean isGnssStale() {
+        return lastGoodFixTimeMs > 0
+                && (System.currentTimeMillis() - lastGoodFixTimeMs) >= NO_GNSS_ALERT_MS;
+    }
+
+    /**
      * True if ANY tracking-critical health parameter is bad. Mirrors exactly the
      * "Report to Office" rule the old AlarmDialogActivity used (Play Protect is NOT
      * counted as a problem).
@@ -1459,7 +1567,8 @@ public class LocationTrackingService extends Service {
         }
 
         return gpsOff || bgLocOff || netOff || q > 30
-                || batOptimised || bkgndBlocked || notifOff;
+                || batOptimised || bkgndBlocked || notifOff
+                || isGnssStale();
     }
 
     @Override

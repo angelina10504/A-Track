@@ -60,6 +60,14 @@ public interface LocationTrackDao {
     @Query("UPDATE location_tracks SET synced = 1 WHERE id IN (:ids)")
     void markAsSynced(List<Integer> ids);
 
+    // Poison-row self-heal: trim over-long textMsg IN THE DB so the next sync retry
+    // fits the server's TextMsg column ("Data too long" rejections otherwise repeat
+    // forever and the row stays stuck at synced=0). The length() guard makes this a
+    // no-op for healthy rows, so it is safe to call on every unconfirmed id.
+    @Query("UPDATE location_tracks SET textMsg = substr(textMsg, 1, :maxLen) " +
+            "WHERE id IN (:ids) AND length(textMsg) > :maxLen")
+    int capTextMsg(List<Integer> ids, int maxLen);
+
     // Counts for the live foreground-notification status
     @Query("SELECT COUNT(*) FROM location_tracks WHERE mobileNumber = :mobile AND synced = 0")
     int countUnsynced(String mobile);
