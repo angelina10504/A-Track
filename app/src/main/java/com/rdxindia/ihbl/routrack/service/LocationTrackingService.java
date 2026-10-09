@@ -81,6 +81,11 @@ public class LocationTrackingService extends Service {
     private static final int DATATYPE_MOCK    = DataTypes.MOCK;
     private static final int DATATYPE_PHOTO   = DataTypes.PHOTO;
     private static final int DATATYPE_VIDEO   = DataTypes.VIDEO;
+    private static final int DATATYPE_SOS     = DataTypes.SOS;
+    private static final int DATATYPE_LOGOUT  = DataTypes.LOGOUT;
+
+    private static final String SOS_TAG = "SOS";
+    private static final long SOS_FIX_TIMEOUT_MS = 5000; // never hold an SOS up for GPS
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
@@ -149,6 +154,48 @@ public class LocationTrackingService extends Service {
 
     private NetworkMonitor networkMonitor;
 
+    // Note left by RouTrackMessagingService when an FCM push restarts a stopped service.
+    public static final String PREFS_FCM_REVIVE = "FcmRevive";
+
+    // True when Android refused startForeground() in onCreate(). Nothing else was
+    // initialised, so onStartCommand()/onDestroy() must do nothing.
+    private boolean startupBlocked = false;
+
+    /**
+     * True if Android will allow this location foreground service to be started while
+     * the app is NOT on screen. Since Android 14 that needs location permission set to
+     * "Allow all the time". Background starters (watchdog, FCM) must check this first:
+     * calling startForegroundService() when it is false ends in a crash.
+     */
+    public static boolean canStartFromBackground(Context context) {
+        boolean hasLocation =
+                context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED
+                || context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+        return hasLocation && DeviceInfoHelper.hasAllTheTimeLocationPermission(context);
+    }
+
+    /**
+     * Remembers that a start was refused, so the next successful start reports it to the
+     * server as an APP_KILL record (same mechanism as crash reasons). Without this the
+     * office would only see an unexplained gap.
+     */
+    private void recordBlockedStart(Exception e) {
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("KillLog", MODE_PRIVATE);
+            if (prefs.getString("pending_kill_reason", null) != null) return; // keep the first one
+            String msg = String.valueOf(e.getMessage());
+            if (msg.length() > 120) msg = msg.substring(0, 120);
+            prefs.edit()
+                    .putString("pending_kill_reason",
+                            "FGS_BLOCKED | background start refused (location not 'Allow all the time'?) | " + msg)
+                    .putLong("pending_kill_time", System.currentTimeMillis())
+                    .apply();
+        } catch (Exception ignored) {
+        }
+    }
+
     private final IBinder binder = new LocalBinder();
 
     public class LocalBinder extends Binder {
@@ -175,7 +222,23 @@ public class LocationTrackingService extends Service {
         // The initial notification needs no DB/SessionManager — counts render as "—".
         // Everything heavy is deferred to AFTER we are safely in the foreground.
         createNotificationChannel();
-        startForeground(NOTIFICATION_ID, createNotification());
+        try {
+            startForeground(NOTIFICATION_ID, createNotification());
+        } catch (Exception e) {
+            // Android 14+ refuses a location foreground service that is started while the
+            // app is in the background unless location is "Allow all the time" (and it
+            // refuses outright if location permission is missing). That refusal used to
+            // crash the app (SecurityException in onCreate, seen on a Lava Go device).
+            // Stop quietly instead; tracking resumes the next time the app is opened.
+            Log.e(TAG, "startForeground() refused — service cannot run right now: " + e);
+            startupBlocked = true;
+            isRunning = false;
+            recordBlockedStart(e);
+            // The revive did not happen after all — do not report one later.
+            getSharedPreferences(PREFS_FCM_REVIVE, MODE_PRIVATE).edit().clear().apply();
+            stopSelf();
+            return;
+        }
 
         // Baseline for the no-GNSS check — without this the first health run would
         // instantly report "no satellite lock" before any fix has had a chance to arrive.
@@ -198,8 +261,12 @@ public class LocationTrackingService extends Service {
                     + ", age=" + ((System.currentTimeMillis() - lastSavedTime) / 1000) + "s ago");
         }
 
-        networkMonitor = new NetworkMonitor(this, sessionManager, this::stopSelf);
+        networkMonitor = new NetworkMonitor(this, sessionManager, this::stopSelf,
+                this::saveLogoutRecordOnly);
         networkMonitor.register();
+
+        // Retry FCM token registration if an earlier attempt failed (no-op once synced)
+        RouTrackMessagingService.syncTokenIfNeeded(getApplicationContext());
         handler = new Handler(Looper.getMainLooper());
         random = new Random(); // must be initialized before startPeriodicSync()
 
@@ -832,6 +899,67 @@ public class LocationTrackingService extends Service {
                 }
                 // ─────────────────────────────────────────────────────────────────
 
+                // ── Report an FCM revive (datatype 101) on the first fix after it ──
+                android.content.SharedPreferences fcmPrefs =
+                        getSharedPreferences(PREFS_FCM_REVIVE, MODE_PRIVATE);
+                long revivedAt = fcmPrefs.getLong("revived_at", 0);
+                if (revivedAt > 0) {
+                    try {
+                        long lastRecordTime = fcmPrefs.getLong("last_record_time", 0);
+                        String lastStr = "NA";
+                        String downStr = "NA";
+                        if (lastRecordTime > 0) {
+                            lastStr = new java.text.SimpleDateFormat("HH:mm:ss", Locale.US)
+                                    .format(new java.util.Date(lastRecordTime));
+                            long downMin = Math.max(0, (revivedAt - lastRecordTime) / 60000L);
+                            downStr = downMin + " min";
+                        }
+                        String fcmText = "FCM | " + lastStr + " | Down " + downStr
+                                + " | " + getDeviceHealthString(mobileNumber);
+
+                        int fcmLastRecNo = sessionManager.getLastRecNo();
+                        if (fcmLastRecNo == 0) {
+                            fcmLastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                        }
+                        int fcmRecNo = fcmLastRecNo + 1;
+                        LocationTrack fcmRecord = new LocationTrack(
+                                mobileNumber,
+                                locationToSave.getLatitude(),
+                                locationToSave.getLongitude(),
+                                0f,
+                                locationToSave.getBearing(),
+                                currentTime,
+                                sessionId,
+                                battery,
+                                null, null,
+                                fcmText,
+                                deviceInfo.getGpsState(),
+                                deviceInfo.getInternetState(),
+                                deviceInfo.getFlightState(),
+                                deviceInfo.getRoamingState(),
+                                deviceInfo.getIsNetThere(),
+                                deviceInfo.getIsNwThere(),
+                                deviceInfo.getIsMoving(0f),
+                                deviceInfo.getModelNo(),
+                                deviceInfo.getModelOS(),
+                                deviceInfo.getApkName(),
+                                deviceInfo.getImsiNo(),
+                                mobileTime,
+                                nss,
+                                fcmRecNo,
+                                DataTypes.FCM_REVIVE
+                        );
+                        db.locationTrackDao().insert(fcmRecord);
+                        sessionManager.saveLastRecNo(fcmRecNo);
+                        Log.d(TAG, "✓ FCM revive record saved: " + fcmText);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error saving FCM revive record: " + e.getMessage());
+                    } finally {
+                        fcmPrefs.edit().clear().apply();
+                    }
+                }
+                // ─────────────────────────────────────────────────────────────────
+
                 int lastRecNo = sessionManager.getLastRecNo();
                 if (lastRecNo == 0) {
                     // Fallback to DB on first run or after data clear
@@ -940,11 +1068,16 @@ public class LocationTrackingService extends Service {
             case DataTypes.INSTALL:      return "Install";
             case DataTypes.REBOOT:       return "Reboot";
             case DataTypes.NORMAL:       return "Normal";
+            case DataTypes.LOGOUT:       return "Logout";
             case DataTypes.MOCK:         return "Mock Location";
             case DataTypes.PHOTO:        return "Photo";
             case DataTypes.VIDEO:        return "Video";
             case DataTypes.ALARM_ACK:    return "Alarm Acknowledged";
             case DataTypes.ALARM_MISSED: return "Alarm Missed";
+            case DataTypes.SOS:          return "SOS";
+            case DataTypes.APP_KILL:     return "App Kill";
+            case DataTypes.HEALTH_ALERT: return "Health Alert";
+            case DataTypes.FCM_REVIVE:   return "FCM Revive";
             default:                     return "Unknown";
         }
     }
@@ -1060,7 +1193,8 @@ public class LocationTrackingService extends Service {
         if (mobile == null) return;
 
         executorService.execute(() -> {
-            List<LocationTrack> unsyncedTracks = db.locationTrackDao().getUnsyncedTracks(mobile);
+            // All unsynced rows on the phone, not only the current user's (see DAO comment).
+            List<LocationTrack> unsyncedTracks = db.locationTrackDao().getAllUnsyncedTracks();
 
             if (!unsyncedTracks.isEmpty()) {
                 int totalRecords = unsyncedTracks.size();
@@ -1414,6 +1548,12 @@ public class LocationTrackingService extends Service {
         Log.d(TAG, "flags=" + flags + ", startId=" + startId);
         Log.d(TAG, "intent=" + (intent != null ? intent.toString() : "null"));
 
+        if (startupBlocked) {
+            // onCreate() could not enter the foreground; do not ask the OS to restart us.
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
         // CRITICAL (Android 12+): every Context.startForegroundService() call makes a
         // promise that this service will call startForeground() within ~5s. onCreate()
         // only runs on the FIRST start — so when AlarmReceiver re-starts us via
@@ -1456,6 +1596,309 @@ public class LocationTrackingService extends Service {
         );
 
         Log.d(TAG, "✓ WorkManager watchdog scheduled (every 15 min)");
+    }
+
+    // ─── LOGOUT record (datatype 3) ─────────────────────────────────────────────
+
+    public interface LogoutCallback {
+        /** Runs on the main thread, exactly once. @param synced true = server confirmed it. */
+        void onDone(boolean synced);
+    }
+
+    /**
+     * Writes the LOGOUT record for the current session and makes one attempt to send it,
+     * giving up after {@code timeoutMs}. The callback always fires — on success, on
+     * failure, or at the timeout — so the caller can go on to log out either way. If the
+     * record is not confirmed it stays in the database and syncs after the next login.
+     *
+     * Must be called BEFORE SessionManager.logout(): mobile number and session ID are
+     * captured here, on the calling thread.
+     */
+    public void saveLogoutRecordAndSync(long timeoutMs, LogoutCallback callback) {
+        final String mobileNumber = sessionManager.getMobileNumber();
+        final String sessionId = sessionManager.getSessionId();
+        final long logoutTime = sessionManager.getTrueTimeMs();
+        final java.util.concurrent.atomic.AtomicBoolean reported =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        if (mobileNumber == null || sessionId == null) {
+            Log.w(TAG, "LOGOUT record skipped — no active session");
+            handler.post(() -> callback.onDone(false));
+            return;
+        }
+
+        handler.postDelayed(() -> {
+            if (reported.compareAndSet(false, true)) {
+                Log.w(TAG, "LOGOUT sync not confirmed within " + (timeoutMs / 1000)
+                        + "s — continuing; the record will sync after the next login");
+                callback.onDone(false);
+            }
+        }, timeoutMs);
+
+        executorService.execute(() -> {
+            boolean synced = false;
+            try {
+                LocationTrack track = insertLogoutRecord(mobileNumber, sessionId, logoutTime);
+
+                boolean verified = SessionManager.STATUS_VERIFIED
+                        .equals(sessionManager.getVerificationStatus());
+                if (track == null) {
+                    Log.e(TAG, "LOGOUT record could not be saved");
+                } else if (!isNetworkAvailable()) {
+                    Log.w(TAG, "Offline — LOGOUT record stays queued");
+                } else if (!verified) {
+                    Log.w(TAG, "Account not verified — LOGOUT record stays queued");
+                } else if (!reported.get()) {
+                    // Send everything waiting if it fits one batch, otherwise the LOGOUT
+                    // record on its own so it is not held up by a backlog.
+                    List<LocationTrack> pending = db.locationTrackDao().getAllUnsyncedTracks();
+                    List<LocationTrack> batch = pending.size() <= 10
+                            ? pending : java.util.Collections.singletonList(track);
+                    syncBatchBlocking(batch);
+                    synced = db.locationTrackDao().getSyncedFlag(track.getId()) == 1;
+                    Log.d(TAG, synced ? "✓ Server confirmed the LOGOUT record"
+                            : "✗ LOGOUT record not confirmed — stays queued");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error saving/sending LOGOUT record: " + e.getMessage(), e);
+            }
+            final boolean result = synced;
+            if (reported.compareAndSet(false, true)) {
+                handler.post(() -> callback.onDone(result));
+            }
+        });
+    }
+
+    /**
+     * Forced logout (server rejected the account): write the LOGOUT record and return
+     * immediately. No sync is attempted — a rejected account is not allowed to sync, so
+     * the record waits until that number is verified and logs in again.
+     */
+    private void saveLogoutRecordOnly() {
+        final String mobileNumber = sessionManager.getMobileNumber();
+        final String sessionId = sessionManager.getSessionId();
+        final long logoutTime = sessionManager.getTrueTimeMs();
+        if (mobileNumber == null || sessionId == null) return;
+        executorService.execute(() -> insertLogoutRecord(mobileNumber, sessionId, logoutTime));
+    }
+
+    /**
+     * Builds and inserts the LOGOUT record the same way as the health-alert record.
+     * Uses the last known fix, else the last tracked position; never waits for GPS.
+     * Runs on the service executor. Returns the saved row (with its id), or null.
+     */
+    private LocationTrack insertLogoutRecord(String mobileNumber, String sessionId, long logoutTime) {
+        try {
+            double lat, lng;
+            float speed = 0f, angle = 0f;
+            if (lastLocation != null
+                    && !(lastLocation.getLatitude() == 0.0 && lastLocation.getLongitude() == 0.0)) {
+                lat = lastLocation.getLatitude();
+                lng = lastLocation.getLongitude();
+                angle = lastLocation.hasBearing() ? lastLocation.getBearing() : 0f;
+            } else {
+                lat = sessionManager.getLastTrackedLat();
+                lng = sessionManager.getLastTrackedLng();
+            }
+
+            DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+            int lastRecNo = sessionManager.getLastRecNo();
+            if (lastRecNo == 0) {
+                lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+            }
+            int nextRecNo = lastRecNo + 1;
+            sessionManager.saveLastRecNo(nextRecNo);
+
+            String textMsg = "LOGOUT | "
+                    + new java.text.SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.US)
+                            .format(new java.util.Date(logoutTime))
+                    + " | " + getDeviceHealthString(mobileNumber);
+
+            LocationTrack track = new LocationTrack(
+                    mobileNumber, lat, lng, speed, angle,
+                    logoutTime, sessionId,
+                    getBatteryLevel(), null, null,
+                    textMsg,
+                    deviceInfo.getGpsState(), deviceInfo.getInternetState(),
+                    deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
+                    deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
+                    deviceInfo.getIsMoving(speed), deviceInfo.getModelNo(),
+                    deviceInfo.getModelOS(), deviceInfo.getApkName(),
+                    deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
+                    deviceInfo.getNetworkSignalStrength(),
+                    nextRecNo, DATATYPE_LOGOUT
+            );
+            long rowId = db.locationTrackDao().insert(track);
+            track.setId((int) rowId);
+            sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
+            Log.d(TAG, "✓ LOGOUT record saved: RecNo=" + nextRecNo + " | " + textMsg);
+            return track;
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving LOGOUT record: " + e.getMessage(), e);
+            return null;
+        }
+    }
+
+    // ─── SOS ────────────────────────────────────────────────────────────────────
+
+    public interface SosCallback {
+        /** @param sent true = the server confirmed the SOS; false = saved, will sync later. */
+        void onResult(boolean sent);
+    }
+
+    /**
+     * Emergency alert from the dashboard SOS button. Saves a datatype-90 record built the
+     * same way as the health-alert record and pushes it to the server straight away.
+     *
+     * A fresh high-accuracy fix is attempted for at most 5 seconds; after that the last
+     * fix this service received is used, then the last tracked position. GPS can delay
+     * the SOS by 5 seconds at most and can never stop it.
+     *
+     * The callback runs on the main thread.
+     */
+    public void triggerSos(SosCallback callback) {
+        Log.d(SOS_TAG, "SOS triggered — requesting a fresh location fix (max 5s)");
+        // Captured now, so the record carries the moment of the press even if the
+        // fix or the database write takes a few seconds.
+        final long sosTime = sessionManager.getTrueTimeMs();
+        final java.util.concurrent.atomic.AtomicBoolean proceeded =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final com.google.android.gms.tasks.CancellationTokenSource cts =
+                new com.google.android.gms.tasks.CancellationTokenSource();
+
+        final Runnable useFallback = () -> {
+            if (proceeded.compareAndSet(false, true)) {
+                cts.cancel();
+                saveSosRecord(sosFallbackLocation(), sosTime, callback);
+            }
+        };
+        handler.postDelayed(() -> {
+            if (!proceeded.get()) Log.w(SOS_TAG, "Fresh fix timed out after 5s");
+            useFallback.run();
+        }, SOS_FIX_TIMEOUT_MS);
+
+        try {
+            fusedLocationClient
+                    .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.getToken())
+                    .addOnSuccessListener(location -> {
+                        if (location != null
+                                && !(location.getLatitude() == 0.0 && location.getLongitude() == 0.0)) {
+                            if (proceeded.compareAndSet(false, true)) {
+                                Log.d(SOS_TAG, "Fresh fix obtained: " + describeFixQuality(location));
+                                saveSosRecord(location, sosTime, callback);
+                            }
+                        } else {
+                            Log.w(SOS_TAG, "Fresh fix returned no location");
+                            useFallback.run();
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.w(SOS_TAG, "Fresh fix failed: " + e.getMessage());
+                        useFallback.run();
+                    });
+        } catch (SecurityException e) {
+            Log.w(SOS_TAG, "No location permission for a fresh fix: " + e.getMessage());
+            useFallback.run();
+        }
+    }
+
+    /** Last fix this service received, else the last tracked position, else (0,0). */
+    private Location sosFallbackLocation() {
+        if (lastLocation != null
+                && !(lastLocation.getLatitude() == 0.0 && lastLocation.getLongitude() == 0.0)) {
+            Log.d(SOS_TAG, "Using last known location");
+            // Relabelled so the record shows this is NOT a fresh fix (accuracy is kept).
+            Location known = new Location(lastLocation);
+            known.setProvider("last_known");
+            return known;
+        }
+        Location loc = new Location("last_tracked");
+        loc.setLatitude(sessionManager.getLastTrackedLat());
+        loc.setLongitude(sessionManager.getLastTrackedLng());
+        Log.d(SOS_TAG, "Using last tracked position from session: "
+                + loc.getLatitude() + "," + loc.getLongitude());
+        return loc;
+    }
+
+    private void saveSosRecord(Location location, long sosTime, SosCallback callback) {
+        final String mobileNumber = sessionManager.getMobileNumber();
+        final String sessionId = sessionManager.getSessionId();
+        if (mobileNumber == null || sessionId == null) {
+            Log.e(SOS_TAG, "Cannot save SOS: no active session");
+            handler.post(() -> callback.onResult(false));
+            return;
+        }
+
+        // Same executor as every other record, so RecNo allocation cannot collide.
+        executorService.execute(() -> {
+            boolean sent = false;
+            try {
+                double lat = location.getLatitude();
+                double lng = location.getLongitude();
+                float speed = location.hasSpeed() ? location.getSpeed() * 3.6f : 0f;
+                float angle = location.hasBearing() ? location.getBearing() : 0f;
+
+                DeviceInfoHelper deviceInfo = new DeviceInfoHelper(this);
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobileNumber);
+                }
+                int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
+
+                String textMsg = "SOS | "
+                        + new java.text.SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.US)
+                                .format(new java.util.Date(sosTime))
+                        + " | " + describeFixQuality(location)
+                        + " | " + getDeviceHealthString(mobileNumber);
+
+                LocationTrack track = new LocationTrack(
+                        mobileNumber, lat, lng, speed, angle,
+                        sosTime, sessionId,
+                        getBatteryLevel(), null, null,
+                        textMsg,
+                        deviceInfo.getGpsState(), deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(location.hasSpeed() ? location.getSpeed() : 0f),
+                        deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(), deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
+                        deviceInfo.getNetworkSignalStrength(),
+                        nextRecNo, DATATYPE_SOS
+                );
+
+                long rowId = db.locationTrackDao().insert(track);
+                track.setId((int) rowId);
+                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
+                Log.d(SOS_TAG, "✓ SOS record saved: RecNo=" + nextRecNo + " lat=" + lat
+                        + " lng=" + lng + " | " + textMsg);
+
+                // Send the SOS on its own first, so it never waits behind a backlog of
+                // ordinary records. Same gates as the normal sync.
+                boolean verified = SessionManager.STATUS_VERIFIED
+                        .equals(sessionManager.getVerificationStatus());
+                if (!isNetworkAvailable()) {
+                    Log.w(SOS_TAG, "Offline — SOS stays queued and syncs with the normal cycle");
+                } else if (!verified) {
+                    Log.w(SOS_TAG, "Account not verified yet — SOS stays queued");
+                } else {
+                    Log.d(SOS_TAG, "Sending SOS to server now…");
+                    syncBatchBlocking(java.util.Collections.singletonList(track));
+                    sent = db.locationTrackDao().getSyncedFlag((int) rowId) == 1;
+                    Log.d(SOS_TAG, sent ? "✓ Server confirmed the SOS"
+                            : "✗ Server did not confirm the SOS — it stays queued");
+                }
+            } catch (Exception e) {
+                Log.e(SOS_TAG, "Error saving/sending SOS: " + e.getMessage(), e);
+            }
+
+            final boolean result = sent;
+            handler.post(() -> callback.onResult(result));
+            // Existing sync: sends anything else that is waiting (and retries the SOS
+            // on every later cycle if it was not confirmed).
+            handler.post(this::syncDataToServer);
+        });
     }
 
     /**
@@ -1576,6 +2019,12 @@ public class LocationTrackingService extends Service {
         super.onDestroy();
 
         isRunning = false;
+
+        if (startupBlocked) {
+            // Nothing was started, so there is nothing to tear down and no restart to schedule.
+            Log.d(TAG, "Service onDestroy after blocked start");
+            return;
+        }
 
         if (networkMonitor != null) networkMonitor.unregister();
         Log.d(TAG, "Service onDestroy - Stopping location tracking");

@@ -42,14 +42,25 @@ public class ServiceWatchdogWorker extends Worker {
         }
 
         if (!isServiceRunning(context)) {
-            Log.w(TAG, "⚠️ Service not running - restarting via watchdog");
-            Intent serviceIntent = new Intent(context, LocationTrackingService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
-            } else {
-                context.startService(serviceIntent);
+            if (!LocationTrackingService.canStartFromBackground(context)) {
+                // Android would refuse the start and crash the app. Tracking resumes
+                // when the user opens the app; the dashboard asks for "Allow all the time".
+                Log.w(TAG, "⚠️ Service not running, but location is not 'Allow all the time'"
+                        + " - cannot restart from background");
+                return Result.success();
             }
-            Log.d(TAG, "✓ Service restart triggered by watchdog");
+            Log.w(TAG, "⚠️ Service not running - restarting via watchdog");
+            try {
+                Intent serviceIntent = new Intent(context, LocationTrackingService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent);
+                } else {
+                    context.startService(serviceIntent);
+                }
+                Log.d(TAG, "✓ Service restart triggered by watchdog");
+            } catch (Exception e) {
+                Log.e(TAG, "✗ Watchdog could not restart service: " + e);
+            }
         } else {
             Log.d(TAG, "✓ Watchdog check: service is alive");
         }

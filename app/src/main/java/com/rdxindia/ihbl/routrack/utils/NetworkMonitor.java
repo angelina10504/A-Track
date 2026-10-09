@@ -28,14 +28,22 @@ public class NetworkMonitor {
     private final Context context;
     private final SessionManager sessionManager;
     private final Runnable onStopRequested;
+    private final Runnable onBeforeForcedLogout;
     private final ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private final AtomicBoolean verificationInProgress = new AtomicBoolean(false);
 
-    public NetworkMonitor(Context context, SessionManager sessionManager, Runnable onStopRequested) {
+    /**
+     * @param onBeforeForcedLogout runs just before the session is cleared when the server
+     *                             rejects the account, while mobile number and session ID
+     *                             are still available (used to write the LOGOUT record).
+     */
+    public NetworkMonitor(Context context, SessionManager sessionManager, Runnable onStopRequested,
+                          Runnable onBeforeForcedLogout) {
         this.context = context;
         this.sessionManager = sessionManager;
         this.onStopRequested = onStopRequested;
+        this.onBeforeForcedLogout = onBeforeForcedLogout;
         this.connectivityManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
     }
 
@@ -100,6 +108,13 @@ public class NetworkMonitor {
                     verificationInProgress.set(false);
                     sessionManager.setVerificationStatus(SessionManager.STATUS_REJECTED);
                     showAccessRevokedNotification();
+                    if (onBeforeForcedLogout != null) {
+                        try {
+                            onBeforeForcedLogout.run();
+                        } catch (Exception e) {
+                            Log.e(TAG, "Could not write logout record: " + e.getMessage());
+                        }
+                    }
                     sessionManager.logout();
 
                     Intent intent = new Intent(context, LoginActivity.class);

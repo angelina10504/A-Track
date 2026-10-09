@@ -220,6 +220,68 @@ public class ApiService {
     }
 
     /* ================================
+       REGISTER FCM TOKEN
+       ================================ */
+
+    public interface FcmTokenCallback {
+        void onSuccess();
+        void onFailure(String error);
+    }
+
+    /**
+     * Sends this install's Firebase Cloud Messaging token to the server so it can
+     * push a "restart_tracking" data message when the device goes quiet.
+     */
+    public static void registerFcmToken(String mobile, String androidId, String token,
+                                        FcmTokenCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(BASE_URL + "register_fcm_token.php");
+                conn = (HttpURLConnection) url.openConnection();
+                applyTrustAllSsl(conn);
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(TIMEOUT);
+                conn.setReadTimeout(TIMEOUT);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                String postData = "mobile_no=" + mobile + "&android_id=" + androidId
+                        + "&fcm_token=" + java.net.URLEncoder.encode(token, "UTF-8");
+                conn.getOutputStream().write(postData.getBytes("UTF-8"));
+                conn.getOutputStream().flush();
+                conn.getOutputStream().close();
+
+                int code = conn.getResponseCode();
+                BufferedReader br = new BufferedReader(new InputStreamReader(
+                        code == 200 ? conn.getInputStream() : conn.getErrorStream()
+                ));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+
+                Log.d(TAG, "registerFcmToken response (HTTP " + code + "): " + sb);
+                if (code != 200) {
+                    callback.onFailure("HTTP " + code);
+                    return;
+                }
+                JSONObject res = parseJsonObjectLenient(sb.toString());
+                if (res.optBoolean("success")) {
+                    callback.onSuccess();
+                } else {
+                    callback.onFailure(res.optString("message", "Token registration failed"));
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "registerFcmToken error: " + e.getMessage());
+                callback.onFailure(e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
+
+    /* ================================
        SYNC LOCATIONS (JSON)
        ================================ */
 

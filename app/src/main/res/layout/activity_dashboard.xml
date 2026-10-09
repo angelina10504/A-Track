@@ -33,11 +33,16 @@
             android:layout_marginTop="4dp"/>
     </LinearLayout>
 
+    <!-- Scrolling content with the SOS button floating over its bottom-right corner -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
     <ScrollView
         android:id="@+id/dashboardScrollView"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="match_parent"
         android:fillViewport="true"
         android:clipToPadding="false">
 
@@ -202,12 +207,55 @@
                 android:layout_marginTop="16dp"
                 android:padding="8dp"
                 android:gravity="center"
-                android:text="v4.4"
+                android:text="v4.5"
                 android:textColor="@color/white"
                 android:textSize="12sp"
                 android:alpha="0.7" />
 
         </LinearLayout>
     </ScrollView>
+
+    <!-- Floating SOS button. The scroll view gets extra bottom padding in code, so any
+         control underneath can always be scrolled clear of it. -->
+    <FrameLayout
+        android:id="@+id/sosContainer"
+        android:layout_width="88dp"
+        android:layout_height="88dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        android:clipChildren="false"
+        android:elevation="8dp">
+
+        <ProgressBar
+            android:id="@+id/sosProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:minHeight="88dp"
+            android:maxHeight="88dp"
+            android:indeterminate="false"
+            android:max="3000"
+            android:progress="0"
+            android:progressDrawable="@drawable/sos_ring" />
+
+        <TextView
+            android:id="@+id/btnSos"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_gravity="center"
+            android:background="@drawable/sos_button_bg"
+            android:clickable="true"
+            android:contentDescription="SOS. Hold for 3 seconds to send an emergency alert"
+            android:elevation="8dp"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="SOS"
+            android:textColor="@android:color/white"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+    </FrameLayout>
+
+    </FrameLayout>
 
 </LinearLayout>

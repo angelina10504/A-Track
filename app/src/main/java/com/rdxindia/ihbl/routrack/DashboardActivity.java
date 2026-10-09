@@ -82,6 +82,20 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
 
     private LocationTrackingService locationService;
     private boolean serviceBound = false;
+    private AlertDialog bgLocationDialog;
+
+    // ─── SOS button ───
+    private static final String SOS_TAG = "SOS";
+    private static final long SOS_HOLD_MS = 3000;
+    private static final long SOS_TAP_MAX_MS = 400;       // shorter than this = a tap
+    private static final long SOS_COOLDOWN_MS = 60_000;
+    private static long sosCooldownUntil = 0;             // static: survives screen rotation
+    private TextView btnSos;
+    private android.widget.ProgressBar sosProgress;
+    private android.animation.ObjectAnimator sosAnimator;
+    private boolean sosHoldCompleted = false;
+    private long sosDownTime = 0;
+    private final Handler sosHandler = new Handler(android.os.Looper.getMainLooper());
     private Handler handler;
     private Runnable updateRunnable;
 
@@ -113,7 +127,7 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
                             // ✅ After background location, request phone state
                             requestPhoneStatePermission();
                         } else {
-                            Toast.makeText(this, "Background location is recommended", Toast.LENGTH_LONG).show();
+                            Toast.makeText(this, "Location must be set to \"Allow all the time\"", Toast.LENGTH_LONG).show();
                             // ✅ Still request phone state even if background denied
                             requestPhoneStatePermission();
                         }
@@ -201,10 +215,22 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             view.setPadding(basePx, basePx + statusTop, basePx, basePx);
             return insets;
         });
-        // ScrollView: add bottom padding so the last button scrolls fully above the nav bar
+        // The SOS button floats over the scroll view's bottom-right corner. The red circle
+        // is 72dp inside an 88dp ring, so a 16dp margin puts the circle 24dp from the edges.
+        float density = getResources().getDisplayMetrics().density;
+        int sosMarginPx = (int) (16 * density);
+        int sosClearancePx = (int) (112 * density);   // ring height + margins
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.dashboardScrollView), (view, insets) -> {
             int navBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
-            view.setPadding(0, 0, 0, navBottom);
+            // Extra bottom padding lets the last controls scroll up clear of the button
+            view.setPadding(0, 0, 0, navBottom + sosClearancePx);
+            android.view.View sos = findViewById(R.id.sosContainer);
+            if (sos != null) {
+                android.widget.FrameLayout.LayoutParams lp =
+                        (android.widget.FrameLayout.LayoutParams) sos.getLayoutParams();
+                lp.bottomMargin = sosMarginPx + navBottom;
+                sos.setLayoutParams(lp);
+            }
             return insets;
         });
     }
@@ -233,6 +259,184 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
             });
         }
         maybeShowLogHint();
+        setupSosButton();
+    }
+
+    // ─── SOS: press and hold for 3 seconds ──────────────────────────────────────
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private void setupSosButton() {
+        btnSos = findViewById(R.id.btnSos);
+        sosProgress = findViewById(R.id.sosProgress);
+        if (btnSos == null || sosProgress == null) return;
+
+        applySosCooldownState();
+
+        btnSos.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    if (System.currentTimeMillis() < sosCooldownUntil) return true;
+                    sosDownTime = android.os.SystemClock.elapsedRealtime();
+                    sosHoldCompleted = false;
+                    v.setPressed(true);
+                    startSosHold(v);
+                    return true;
+
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    v.setPressed(false);
+                    if (sosHoldCompleted || sosDownTime == 0) return true;
+                    long held = android.os.SystemClock.elapsedRealtime() - sosDownTime;
+                    sosDownTime = 0;
+                    cancelSosHold();
+                    if (event.getActionMasked() == android.view.MotionEvent.ACTION_UP
+                            && held < SOS_TAP_MAX_MS) {
+                        Toast.makeText(this, "Hold for 3 seconds to send SOS", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Log.d(SOS_TAG, "Hold released early after " + held + " ms — cancelled");
+                    }
+                    return true;
+            }
+            return false;
+        });
+    }
+
+    private void startSosHold(android.view.View v) {
+        Log.d(SOS_TAG, "Hold started");
+        sosAnimator = android.animation.ObjectAnimator.ofInt(sosProgress, "progress", 0, (int) SOS_HOLD_MS);
+        sosAnimator.setDuration(SOS_HOLD_MS);
+        sosAnimator.setInterpolator(new android.view.animation.LinearInterpolator());
+        sosAnimator.start();
+
+        // Light tick at 1s and 2s; the 3s mark gets the strong vibration instead.
+        sosHandler.postDelayed(() -> v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP), 1000);
+        sosHandler.postDelayed(() -> v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP), 2000);
+        sosHandler.postDelayed(this::onSosHoldComplete, SOS_HOLD_MS);
+    }
+
+    private void cancelSosHold() {
+        sosHandler.removeCallbacksAndMessages(null);
+        if (sosAnimator != null) sosAnimator.cancel();
+        if (sosProgress != null) sosProgress.setProgress(0);
+    }
+
+    private void onSosHoldComplete() {
+        sosHoldCompleted = true;
+        sosDownTime = 0;
+        Log.d(SOS_TAG, "Hold completed (3s) — sending SOS");
+
+        sosVibrateStrong();
+        sosCooldownUntil = System.currentTimeMillis() + SOS_COOLDOWN_MS;
+        applySosCooldownState();
+        Toast.makeText(this, "Sending SOS…", Toast.LENGTH_SHORT).show();
+
+        if (serviceBound && locationService != null) {
+            locationService.triggerSos(this::showSosResult);
+        } else {
+            // Tracking service not connected: still save the SOS so it is never lost.
+            Log.w(SOS_TAG, "Tracking service not bound — saving SOS directly");
+            saveSosWithoutService();
+        }
+    }
+
+    private void sosVibrateStrong() {
+        try {
+            android.os.Vibrator vibrator = (android.os.Vibrator) getSystemService(VIBRATOR_SERVICE);
+            if (vibrator != null && vibrator.hasVibrator()) {
+                vibrator.vibrate(android.os.VibrationEffect.createOneShot(
+                        700, android.os.VibrationEffect.DEFAULT_AMPLITUDE));
+            }
+        } catch (Exception e) {
+            Log.w(SOS_TAG, "Vibration failed: " + e.getMessage());
+        }
+    }
+
+    /** Greys the button out until the 60-second cooldown ends, then re-arms it. */
+    private void applySosCooldownState() {
+        if (btnSos == null) return;
+        long remaining = sosCooldownUntil - System.currentTimeMillis();
+        if (remaining > 0) {
+            btnSos.setEnabled(false);
+            btnSos.setAlpha(0.6f);
+            if (sosProgress != null) sosProgress.setProgress(0);
+            sosHandler.postDelayed(this::applySosCooldownState, remaining + 50);
+        } else {
+            btnSos.setEnabled(true);
+            btnSos.setAlpha(1f);
+        }
+    }
+
+    private void showSosResult(boolean sent) {
+        Log.d(SOS_TAG, sent ? "Result: sent" : "Result: saved, will send when online");
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this)
+                .setTitle(sent ? "SOS sent" : "SOS saved — will send when online")
+                .setMessage(sent
+                        ? "Your emergency alert has been delivered to the server."
+                        : "Your emergency alert is saved on this phone and will be sent "
+                                + "automatically as soon as there is a connection.")
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    /**
+     * Fallback used only when the tracking service is not connected. Saves the SOS with
+     * the last tracked position; the service's normal sync sends it once it is running.
+     */
+    private void saveSosWithoutService() {
+        final String mobile = sessionManager.getMobileNumber();
+        final String sessionId = sessionManager.getSessionId();
+        if (mobile == null || sessionId == null) {
+            Log.e(SOS_TAG, "Cannot save SOS: no active session");
+            showSosResult(false);
+            return;
+        }
+        final long sosTime = sessionManager.getTrueTimeMs();
+        executorService.execute(() -> {
+            try {
+                double lat = sessionManager.getLastTrackedLat();
+                double lng = sessionManager.getLastTrackedLng();
+                com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper deviceInfo =
+                        new com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper(this);
+
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobile);
+                }
+                int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
+
+                String textMsg = "SOS | " + dateFormat.format(new Date(sosTime))
+                        + " | Acc:NA Src:last_tracked | "
+                        + com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper.getDeviceHealthString(this);
+
+                android.content.Intent battery = registerReceiver(null,
+                        new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                int level = battery != null ? battery.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, 0) : 0;
+                int scale = battery != null ? battery.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) : 100;
+
+                LocationTrack track = new LocationTrack(
+                        mobile, lat, lng, 0f, 0f,
+                        sosTime, sessionId,
+                        scale > 0 ? (int) (level * 100f / scale) : 0, null, null,
+                        textMsg,
+                        deviceInfo.getGpsState(), deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(0f), deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(), deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
+                        deviceInfo.getNetworkSignalStrength(),
+                        nextRecNo, DataTypes.SOS
+                );
+                db.locationTrackDao().insert(track);
+                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
+                Log.d(SOS_TAG, "✓ SOS record saved without service: RecNo=" + nextRecNo + " | " + textMsg);
+            } catch (Exception e) {
+                Log.e(SOS_TAG, "Error saving SOS without service: " + e.getMessage(), e);
+            }
+            runOnUiThread(() -> showSosResult(false));
+        });
     }
 
     private void setupRecyclerView() {
@@ -330,23 +534,95 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
                         != PackageManager.PERMISSION_GRANTED) {
-            requestBackgroundLocation();
+            if (!getSharedPreferences("PermissionPrefs", MODE_PRIVATE)
+                    .getBoolean("bg_location_requested", false)) {
+                requestBackgroundLocation();      // first time: system request
+            } else {
+                // Already asked once. Start tracking now (it works while the app is open);
+                // onResume() keeps showing the "Allow all the time" reminder until granted.
+                requestPhoneStatePermission();
+            }
         } else {
             // ✅ Check phone state permission after other permissions
             requestPhoneStatePermission();
         }
     }
 
+    private boolean hasFineLocation() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasBackgroundLocation() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /**
+     * First-time request for "Allow all the time". There is deliberately no Skip button:
+     * without this permission Android 14+ blocks every background restart of the tracking
+     * service, so tracking silently stops whenever the OS closes the app.
+     */
     private void requestBackgroundLocation() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Background Location Permission")
-                    .setMessage("A-Track needs background location permission to track your location when the app is closed.")
-                    .setPositiveButton("Allow", (dialog, which) -> {
+            if (bgLocationDialog != null && bgLocationDialog.isShowing()) return;
+            bgLocationDialog = new AlertDialog.Builder(this)
+                    .setTitle("Allow location all the time")
+                    .setMessage("ROU Track must record your location when the app is closed.\n\n"
+                            + "On the next screen choose \"Allow all the time\".")
+                    .setCancelable(false)
+                    .setPositiveButton("Continue", (dialog, which) -> {
+                        getSharedPreferences("PermissionPrefs", MODE_PRIVATE).edit()
+                                .putBoolean("bg_location_requested", true).apply();
                         backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
                     })
-                    .setNegativeButton("Skip", (dialog, which) -> requestPhoneStatePermission())
                     .show();
+        }
+    }
+
+    /**
+     * Shown on every return to the dashboard while location is still "only while using
+     * the app". Android stops offering its own prompt after the first refusals, so this
+     * sends the user to the app's settings page instead.
+     */
+    private void showBackgroundLocationReminder() {
+        if (bgLocationDialog != null && bgLocationDialog.isShowing()) return;
+        bgLocationDialog = new AlertDialog.Builder(this)
+                .setTitle("Location must be \"Allow all the time\"")
+                .setMessage("Tracking stops when the app is closed because location is set to "
+                        + "\"Only while using the app\".\n\n"
+                        + "Tap Open Settings, then:\nPermissions → Location → Allow all the time")
+                .setCancelable(false)
+                // "Later" keeps the dashboard (and the SOS button) usable. The reminder
+                // comes back every time the dashboard is opened until the permission is set.
+                .setNegativeButton("Later", (dialog, which) ->
+                        Log.d("DashboardActivity", "Background location reminder postponed"))
+                .setPositiveButton("Open Settings", (dialog, which) -> {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    } catch (Exception e) {
+                        Log.e("DashboardActivity", "Could not open app settings: " + e.getMessage());
+                    }
+                })
+                .show();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (hasBackgroundLocation()) {
+            if (bgLocationDialog != null && bgLocationDialog.isShowing()) {
+                bgLocationDialog.dismiss();
+            }
+            return;
+        }
+        // Only once the first-time flow has run; before that onCreate() drives the prompts.
+        if (hasFineLocation() && getSharedPreferences("PermissionPrefs", MODE_PRIVATE)
+                .getBoolean("bg_location_requested", false)) {
+            showBackgroundLocationReminder();
         }
     }
 
@@ -483,9 +759,99 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         new AlertDialog.Builder(this)
                 .setTitle("Logout")
                 .setMessage("Are you sure you want to logout? Location tracking will be stopped.")
-                .setPositiveButton("Logout", (dialog, which) -> performLogout())
+                .setPositiveButton("Logout", (dialog, which) -> startLogoutFlow())
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private boolean logoutInProgress = false;
+
+    /**
+     * Logout button: write the LOGOUT record (datatype 3) so the server knows the duty
+     * ended, try once to send it (10 seconds at most), then log out whatever the result.
+     */
+    private void startLogoutFlow() {
+        if (logoutInProgress) return;
+        logoutInProgress = true;
+
+        final ProgressDialog progress = new ProgressDialog(this);
+        progress.setMessage("Logging out...");
+        progress.setCancelable(false);
+        progress.show();
+
+        final Runnable finish = () -> {
+            try {
+                if (progress.isShowing()) progress.dismiss();
+            } catch (Exception ignored) {
+            }
+            performLogout();
+        };
+
+        if (serviceBound && locationService != null) {
+            locationService.saveLogoutRecordAndSync(10_000,
+                    synced -> {
+                        Log.d("DashboardActivity", "Logout record "
+                                + (synced ? "sent" : "saved, will sync after next login"));
+                        finish.run();
+                    });
+        } else {
+            // Tracking service not connected: still save the record; it syncs after next login.
+            saveLogoutRecordWithoutService(finish);
+        }
+    }
+
+    private void saveLogoutRecordWithoutService(Runnable then) {
+        final String mobile = sessionManager.getMobileNumber();
+        final String sessionId = sessionManager.getSessionId();
+        if (mobile == null || sessionId == null) {
+            then.run();
+            return;
+        }
+        final long logoutTime = sessionManager.getTrueTimeMs();
+        executorService.execute(() -> {
+            try {
+                double lat = sessionManager.getLastTrackedLat();
+                double lng = sessionManager.getLastTrackedLng();
+                com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper deviceInfo =
+                        new com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper(this);
+
+                int lastRecNo = sessionManager.getLastRecNo();
+                if (lastRecNo == 0) {
+                    lastRecNo = db.locationTrackDao().getLastRecNo(mobile);
+                }
+                int nextRecNo = lastRecNo + 1;
+                sessionManager.saveLastRecNo(nextRecNo);
+
+                String textMsg = "LOGOUT | " + dateFormat.format(new Date(logoutTime)) + " | "
+                        + com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper.getDeviceHealthString(this);
+
+                android.content.Intent battery = registerReceiver(null,
+                        new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                int level = battery != null ? battery.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, 0) : 0;
+                int scale = battery != null ? battery.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) : 100;
+
+                LocationTrack track = new LocationTrack(
+                        mobile, lat, lng, 0f, 0f,
+                        logoutTime, sessionId,
+                        scale > 0 ? (int) (level * 100f / scale) : 0, null, null,
+                        textMsg,
+                        deviceInfo.getGpsState(), deviceInfo.getInternetState(),
+                        deviceInfo.getFlightState(), deviceInfo.getRoamingState(),
+                        deviceInfo.getIsNetThere(), deviceInfo.getIsNwThere(),
+                        deviceInfo.getIsMoving(0f), deviceInfo.getModelNo(),
+                        deviceInfo.getModelOS(), deviceInfo.getApkName(),
+                        deviceInfo.getImsiNo(), deviceInfo.getMobileTime(),
+                        deviceInfo.getNetworkSignalStrength(),
+                        nextRecNo, DataTypes.LOGOUT
+                );
+                db.locationTrackDao().insert(track);
+                sessionManager.saveLastTrackedLocation(lat, lng, System.currentTimeMillis());
+                Log.d("DashboardActivity", "✓ LOGOUT record saved without service: RecNo=" + nextRecNo);
+            } catch (Exception e) {
+                Log.e("DashboardActivity", "Error saving LOGOUT record: " + e.getMessage(), e);
+            }
+            runOnUiThread(then);
+        });
     }
 
     private void performLogout() {
@@ -577,6 +943,8 @@ public class DashboardActivity extends AppCompatActivity implements OnMapReadyCa
         if (handler != null && updateRunnable != null) {
             handler.removeCallbacks(updateRunnable);
         }
+        sosHandler.removeCallbacksAndMessages(null);
+        if (sosAnimator != null) sosAnimator.cancel();
 
         // Unbind service if still bound
         if (serviceBound) {

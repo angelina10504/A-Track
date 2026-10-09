@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "59989541970",
+    "project_id": "rou-track",
+    "storage_bucket": "rou-track.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:59989541970:android:4ac596345e8b1c725e8b8b",
+        "android_client_info": {
+          "package_name": "com.rdxindia.ihbl.routrack"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDQpSQ9zcbX3dzYkd_85jPvC8llCn6AFhY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -10,8 +11,8 @@ android {
         applicationId = "com.rdxindia.ihbl.routrack"
         minSdk = 29
         targetSdk = 35
-        versionCode = 5
-        versionName = "4.4"
+        versionCode = 6
+        versionName = "4.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -97,4 +98,8 @@ dependencies {
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
     implementation("androidx.work:work-runtime:2.9.0")
+
+    // Firebase Cloud Messaging — server-sent data message revives the tracking service
+    implementation(platform("com.google.firebase:firebase-bom:34.4.0"))
+    implementation("com.google.firebase:firebase-messaging")
 }

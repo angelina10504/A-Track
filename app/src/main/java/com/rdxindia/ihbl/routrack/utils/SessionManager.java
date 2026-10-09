@@ -33,6 +33,10 @@ public class SessionManager {
     public static final String STATUS_PENDING = "PENDING_VERIFICATION";
     public static final String STATUS_REJECTED = "REJECTED";
 
+    // Firebase Cloud Messaging token (used by the server to revive the tracking service)
+    private static final String KEY_FCM_TOKEN = "fcmToken";
+    private static final String KEY_FCM_TOKEN_SYNCED = "fcmTokenSynced";
+
     private SharedPreferences prefs;
     private SharedPreferences.Editor editor;
     private Context context;
@@ -276,17 +280,48 @@ public class SessionManager {
         return prefs.getLong(KEY_LAST_TRACKED_TIME, 0);
     }
 
+    // ─── FCM token ─────────────────────────────────────────────────────────────
+    public void saveFcmToken(String token) {
+        prefs.edit().putString(KEY_FCM_TOKEN, token).apply();
+    }
+
+    public String getFcmToken() {
+        return prefs.getString(KEY_FCM_TOKEN, null);
+    }
+
+    /** True once the current token has been accepted by the server for the logged-in user. */
+    public boolean isFcmTokenSynced() {
+        return prefs.getBoolean(KEY_FCM_TOKEN_SYNCED, false);
+    }
+
+    public void setFcmTokenSynced(boolean synced) {
+        prefs.edit().putBoolean(KEY_FCM_TOKEN_SYNCED, synced).apply();
+    }
+
     public void logout() {
         Log.d(TAG, "Logging out - clearing session data");
         // ✅ IMPORTANT: Keep app install time when logging out
         long installTime = prefs.getLong(KEY_APP_INSTALL_TIME, 0);
         boolean installLogged = prefs.getBoolean(KEY_INSTALL_LOGGED, false);
+        // The FCM token belongs to this app install, not to the user, so it survives
+        // logout. The synced flag does NOT: it is reset so the token is registered
+        // again against whoever logs in next.
+        String fcmToken = prefs.getString(KEY_FCM_TOKEN, null);
+        // RecNo must keep increasing across logins instead of being rebuilt or reset to 1.
+        int lastRecNo = prefs.getInt("last_rec_no", 0);
 
         editor.clear();
 
         // Restore install tracking data
         editor.putLong(KEY_APP_INSTALL_TIME, installTime);
         editor.putBoolean(KEY_INSTALL_LOGGED, installLogged);
+        if (fcmToken != null) {
+            editor.putString(KEY_FCM_TOKEN, fcmToken);
+        }
+        editor.putBoolean(KEY_FCM_TOKEN_SYNCED, false);
+        if (lastRecNo > 0) {
+            editor.putInt("last_rec_no", lastRecNo);
+        }
         editor.commit();
     }
 }

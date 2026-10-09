@@ -56,6 +56,12 @@ public interface LocationTrackDao {
             "ORDER BY dateTime ASC")
     List<LocationTrack> getUnsyncedTracks(String mobile);
 
+    // Every unsynced record on the phone, whichever user wrote it. Each row carries its
+    // own mobileNumber and sessionId, so rows left behind by an earlier login (including
+    // its LOGOUT record) are still delivered after someone else logs in.
+    @Query("SELECT * FROM location_tracks WHERE synced = 0 ORDER BY dateTime ASC")
+    List<LocationTrack> getAllUnsyncedTracks();
+
     // Mark uploaded records as synced
     @Query("UPDATE location_tracks SET synced = 1 WHERE id IN (:ids)")
     void markAsSynced(List<Integer> ids);
@@ -133,5 +139,9 @@ public interface LocationTrackDao {
 
     @Query("SELECT COUNT(*) FROM location_tracks WHERE mobileNumber = :mobile AND synced = 0")
     int getUnsyncedCount(String mobile);
+
+    // 1 once the server has confirmed this row (used to tell the user an SOS really arrived)
+    @Query("SELECT synced FROM location_tracks WHERE id = :id")
+    int getSyncedFlag(int id);
 
 }

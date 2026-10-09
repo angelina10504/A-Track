@@ -1,14 +1,20 @@
 <?php
 /**
- * send_report.php  —  ROU Track location-report mailer
+ * send_report.php  —  ROU Track location-report mailer  (Brevo SMTP)
  *
  * Receives a CSV (multipart/form-data) from the Android app and emails it to the
- * office. SMTP credentials live HERE on the server (stable IP), so Gmail's
- * anti-abuse does NOT block sends the way it does for many roaming field devices.
+ * office. SMTP credentials live HERE on the server, never in the APK.
+ *
+ * Sends via Brevo (formerly Sendinblue) instead of Gmail. Gmail is a personal
+ * mailbox and repeatedly blocked automated server sending — first with a 534
+ * anti-abuse block, then "SMTP Error: Could not authenticate" after the app
+ * password was rotated. Brevo is a transactional provider built for this.
+ * Free tier: 300 emails/day.
  *
  * Deploy to:  https://droneaeromatix.com/api2/send_report.php
  *
- * The Android app posts (see ApiService.sendReportEmail):
+ * The Android app posts (see ApiService.sendReportEmail) — UNCHANGED, so no APK
+ * update is needed to switch providers:
  *   - mobileNumber  (text)
  *   - subject       (text)
  *   - body          (text)
@@ -16,7 +22,6 @@
  * and expects a JSON reply: {"success":true}  or  {"success":false,"message":"..."}
  *
  * Requires PHPMailer:   composer require phpmailer/phpmailer
- *   (or download it and point the require() below at PHPMailerAutoload.php)
  */
 
 use PHPMailer\PHPMailer\PHPMailer;
@@ -26,12 +31,29 @@ header('Content-Type: application/json');
 require __DIR__ . '/vendor/autoload.php';   // adjust path if PHPMailer lives elsewhere
 
 // ─── CONFIG (edit these) ──────────────────────────────────────────────────────
-const OFFICE_EMAIL   = 'routrackemailreceiver@gmail.com';  // where reports are sent
-const SMTP_HOST      = 'smtp.gmail.com';
+
+// Where reports are sent. Recipients need NO verification in Brevo.
+const OFFICE_EMAIL   = 'routrackemailreceiver@gmail.com';
+
+// Brevo SMTP relay. Port 587 = STARTTLS (use 2525 if your host blocks 587).
+const SMTP_HOST      = 'smtp-relay.brevo.com';
 const SMTP_PORT      = 587;
-const SMTP_USER      = 'a.track1234@gmail.com';            // sending account
-const SMTP_PASS      = 'PUT_NEW_APP_PASSWORD_HERE';        // NEW Gmail App Password (server-only!)
+
+// Brevo LOGIN — from Brevo dashboard → SMTP & API → SMTP tab.
+// This is NOT your Brevo account email; it looks like "9xxxxx001@smtp-brevo.com".
+const SMTP_USER      = 'PUT_BREVO_SMTP_LOGIN_HERE';
+
+// Brevo SMTP KEY (same screen). Server-only — never commit the real value.
+const SMTP_PASS      = 'PUT_BREVO_SMTP_KEY_HERE';
+
+// IMPORTANT: the From address must be a VERIFIED SENDER in Brevo
+// (dashboard → Senders, Domains & Dedicated IPs → Senders → Add a sender,
+// then click the confirmation link Brevo emails you).
+// This is deliberately SEPARATE from SMTP_USER — using the SMTP login as the
+// From address is the most common reason Brevo rejects a message.
+const FROM_EMAIL     = 'PUT_VERIFIED_SENDER_EMAIL_HERE';
 const SMTP_FROM_NAME = 'ROU Track';
+
 // Optional anti-abuse: set a non-empty secret here AND post the same value as a
 // form field "apiKey" from the app. Leave '' to disable.
 const SHARED_SECRET  = '';
@@ -74,10 +96,12 @@ try {
     $mail->Password   = SMTP_PASS;
     $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
     $mail->Port       = SMTP_PORT;
+    $mail->CharSet    = 'UTF-8';   // keeps non-ASCII in subject/body intact
 
-    $mail->setFrom(SMTP_USER, SMTP_FROM_NAME);
+    // From must be the VERIFIED sender, not the SMTP login (see note above).
+    $mail->setFrom(FROM_EMAIL, SMTP_FROM_NAME);
     $mail->addAddress(OFFICE_EMAIL);          // server-controlled recipient (anti-abuse)
-    $mail->addReplyTo(SMTP_USER, SMTP_FROM_NAME);
+    $mail->addReplyTo(FROM_EMAIL, SMTP_FROM_NAME);
 
     $mail->Subject = $subject;
     $mail->Body    = $body;

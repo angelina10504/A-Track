@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.rdxindia.ihbl.routrack.database.AppDatabase;
 import com.rdxindia.ihbl.routrack.database.Session;
 import com.rdxindia.ihbl.routrack.database.User;
+import com.rdxindia.ihbl.routrack.service.RouTrackMessagingService;
 import com.rdxindia.ihbl.routrack.utils.ApiService;
 import com.rdxindia.ihbl.routrack.utils.DeviceInfoHelper;
 import com.rdxindia.ihbl.routrack.utils.SessionManager;
@@ -171,6 +172,8 @@ public class LoginActivity extends AppCompatActivity {
                 if (SessionManager.STATUS_VERIFIED.equals(verificationStatus)) {
                     sessionManager.setVerificationStatus(SessionManager.STATUS_VERIFIED);
                 }
+                // Register this install's FCM token against the user who just logged in
+                RouTrackMessagingService.syncTokenIfNeeded(getApplicationContext());
                 requestBatteryOptimization();
                 Toast.makeText(LoginActivity.this, "Login successful!", Toast.LENGTH_SHORT).show();
                 navigateToDashboard();

@@ -17,7 +17,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <!-- VIBRATE, SCHEDULE_EXACT_ALARM and USE_FULL_SCREEN_INTENT removed with the
+    <!-- Strong vibration confirming that an SOS was triggered (no user prompt). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- SCHEDULE_EXACT_ALARM and USE_FULL_SCREEN_INTENT removed with the
          pop-up safety alarm. The 5s service-restart now uses an inexact alarm
          (setAndAllowWhileIdle), which needs no special permission. -->
 
@@ -86,6 +88,15 @@
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="location" />
+
+        <!-- Firebase Cloud Messaging: data messages that revive the tracking service -->
+        <service
+            android:name=".service.RouTrackMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- Boot Receiver (Logout on Reboot/Shutdown) -->
         <receiver
